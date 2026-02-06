@@ -1,0 +1,13 @@
+streamlit
+duckduckgo-search
+requests
+beautifulsoup4
+spacy
+reportlab
+python-pptx
+tqdm
+joblib
+pydantic
+pytest
+black
+flake8
