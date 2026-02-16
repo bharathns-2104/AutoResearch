@@ -1,2 +1,8 @@
 /venv
 /docs
+venv/
+__pycache__/
+*.pyc
+.env
+logs/
+data/cache/
