@@ -69,3 +69,47 @@ class CacheManager:
 
         except Exception as e:
             logger.warning(f"Cache write failed for {url}: {str(e)}")
+
+
+            # --------------------------------------------
+        # Extraction Cache Path
+        # --------------------------------------------
+    def _get_extraction_cache_path(self):
+        return self.cache_dir / "extracted_data.json"
+
+
+        # --------------------------------------------
+        # Get cached extraction result
+        # --------------------------------------------
+    def get_extraction_cache(self):
+        path = self._get_extraction_cache_path()
+        if not path.exists():
+            return None
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+                if self._is_expired(cached["timestamp"]):
+                    logger.info("Extraction cache expired")
+                    return None
+                logger.info("Extraction cache hit")
+                return cached["content"]
+        except Exception:                
+            return None
+
+
+        # --------------------------------------------
+        # Save extraction cache
+        # --------------------------------------------
+    def set_extraction_cache(self, content):
+        path = self._get_extraction_cache_path()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "timestamp": time.time(),
+                    "content": content
+                }, f)
+            logger.info("Extraction results cached")
+        except Exception as e:
+            logger.warning(f"Failed to cache extraction results: {str(e)}")
+

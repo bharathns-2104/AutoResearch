@@ -179,29 +179,42 @@ class WorkflowController:
     # regex + spaCy extraction engine
     # ---------------------------------------------------
     def handle_extraction(self):
-        logger.info("Handling extraction phase (placeholder for Phase 4)")
+        logger.info("Handling extraction phase")
 
         scraped_content = self.state_manager.data.get("scraped_content")
-
         if not scraped_content:
             self.state_manager.add_error("No scraped content found for extraction")
             return
 
-        # Phase 4 will replace this with real extraction logic.
-        # For now, we confirm the data exists and pass it through.
-        self.state_manager.add_data("extracted_entities", {
-            "pages_available": len(scraped_content),
-            "note": "Full extraction implemented in Phase 4"
-        })
+        # ------------------------------------
+        # Check Extraction Cache
+        # ------------------------------------
+        cached_extraction = self.cache_manager.get_extraction_cache()
 
-        self.state_manager.update_progress(80)
-        self.state_manager.update_state(SystemState.EXTRACTING)
+        if cached_extraction:
+            logger.info("Using cached extraction results")
+            self.state_manager.add_data("extracted_data", cached_extraction)
+            self.state_manager.update_progress(80)
+            self.state_manager.update_state(SystemState.ANALYZING)
+            return
 
-    # ---------------------------------------------------
-    # EXTRACTING → ANALYZING
-    # Placeholder — Phase 4/5 will add Financial,
-    # Market, and Competitive Analysis Agents here
-    # ---------------------------------------------------
+        # ------------------------------------
+        # Run Extraction Engine
+        # ------------------------------------
+        from src.agents.extraction_engine import ExtractionEngine
+
+        extraction_engine = ExtractionEngine()
+        structured_data = extraction_engine.process(scraped_content)
+
+        if structured_data:
+            # Cache result
+            self.cache_manager.set_extraction_cache(structured_data)
+
+            self.state_manager.update_progress(80)
+            self.state_manager.update_state(SystemState.ANALYZING)
+        else:
+            self.state_manager.add_error("Extraction failed")
+
     def handle_analysis(self):
         logger.info("Handling analysis phase (placeholder for Phase 4/5)")
 
