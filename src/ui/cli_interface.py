@@ -8,73 +8,87 @@ logger = setup_logger()
 
 def collect_user_input():
     """
-    Collect corporate analysis requirements from user via CLI.
+    Collect Business Idea Research inputs from user.
     Returns validated structured dictionary.
     """
 
     state = StateManager()
 
-    logger.info("Starting CLI input collection")
+    print("\n=== Business Idea Research Input ===\n")
 
-    print("\n=== Corporate Analysis Input ===\n")
-
-    # ---- Business / Company Name ----
+    # -------------------------------
+    # Business Idea Description
+    # -------------------------------
     while True:
-        company_name = input("Enter Company Name: ").strip()
-        if company_name:
+        idea = input("Describe your business idea: ").strip()
+        if idea:
             break
-        print("Company name cannot be empty.")
+        print("Business idea description cannot be empty.")
 
-    # ---- Industry ----
-    industry = input("Enter Industry (e.g., FinTech, SaaS, Healthcare): ").strip()
+    # -------------------------------
+    # Industry (optional)
+    # -------------------------------
+    industry = input("Industry (optional, press Enter to auto-detect): ").strip()
     if not industry:
-        industry = "Other"
+        industry = "Unknown"
 
-    # ---- Analysis Type ----
-    allowed_types = ["financial", "market", "competitive", "all"]
-
-    while True:
-        analysis_type = input(
-            "Select Analysis Type (financial / market / competitive / all): "
-        ).strip().lower()
-
-        if analysis_type in allowed_types:
-            break
-
-        print("Invalid choice. Please choose from financial, market, competitive, all.")
-
-    # ---- Geographic Focus ----
-    geographic_focus = input("Enter Geographic Focus (e.g., US, Global): ").strip()
-    if not geographic_focus:
-        geographic_focus = "Global"
-
-    # ---- Time Horizon ----
+    # -------------------------------
+    # Budget Validation (> 1000)
+    # -------------------------------
     while True:
         try:
-            time_horizon = int(input("Enter Time Horizon (in years): "))
-            if time_horizon > 0:
+            budget = float(input("Enter available budget (USD): "))
+            if budget > 1000:
                 break
-            print("Time horizon must be a positive number.")
+            print("Budget must be greater than $1,000.")
+        except ValueError:
+            print("Please enter a valid number.")
+
+    # -------------------------------
+    # Timeline (1–60 months)
+    # -------------------------------
+    while True:
+        try:
+            timeline = int(input("Enter timeline (in months): "))
+            if 1 <= timeline <= 60:
+                break
+            print("Timeline must be between 1 and 60 months.")
         except ValueError:
             print("Please enter a valid integer.")
 
-    # ---- Optional Custom Requirements ----
-    custom_req = input("Any specific KPIs or requirements? (Optional): ").strip()
+    # -------------------------------
+    # Target Market
+    # -------------------------------
+    while True:
+        target_market = input("Target market (e.g., US small businesses): ").strip()
+        if target_market:
+            break
+        print("Target market cannot be empty.")
 
-    # ---- Build Structured Dict ----
-    structured_input = {
-        "company_name": company_name,
+    # -------------------------------
+    # Team Size
+    # -------------------------------
+    while True:
+        try:
+            team_size = int(input("Team size: "))
+            if team_size > 0:
+                break
+            print("Team size must be positive.")
+        except ValueError:
+            print("Please enter a valid integer.")
+
+    raw_input = {
+        "business_idea": idea,
         "industry": industry,
-        "analysis_type": analysis_type,
-        "geographic_focus": geographic_focus,
-        "time_horizon_years": time_horizon,
-        "custom_requirements": custom_req if custom_req else None,
+        "budget": budget,
+        "timeline_months": timeline,
+        "target_market": target_market,
+        "team_size": team_size
     }
 
-    # ---- Update State ----
-    state.add_data("raw_input", structured_input)
+    state.add_data("raw_input", raw_input)
     state.update_state(SystemState.INPUT_RECEIVED)
 
-    logger.info("User input successfully collected and validated")
+    logger.info("Business idea input collected successfully")
 
-    return structured_input
+    return raw_input
