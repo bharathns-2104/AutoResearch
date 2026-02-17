@@ -11,3 +11,4 @@ pydantic
 pytest
 black
 flake8
+ddgs
