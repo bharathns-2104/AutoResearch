@@ -1,5 +1,9 @@
 from .state_manager import StateManager, SystemState
 from .logger import setup_logger
+from .input_handler import save_structured_input
+from ..ui.cli_interface import collect_user_input
+from ..agents.intake_agent import IntakeAgent
+from .input_handler import save_structured_input
 
 logger = setup_logger()
 
@@ -55,14 +59,21 @@ class WorkflowController:
 
 
     def handle_initialization(self):
-        logger.info("Handling initialization step")
-        self.state_manager.update_progress(10)
+        logger.info("Starting Phase 2 input pipeline")
 
-        # Simulate receiving input
-        self.state_manager.add_data("idea", "AI Invoice Automation")
+        # Collect raw input
+        raw_input = collect_user_input()
 
+        # Process through Intake Agent
+        agent = IntakeAgent()
+        structured_input = agent.process(raw_input)
+
+        # Save structured JSON
+        save_structured_input(structured_input)
+
+        # Move to next state (ready for Search Phase)
+        self.state_manager.update_progress(20)
         self.state_manager.update_state(SystemState.INPUT_RECEIVED)
-
 
     def handle_search(self):
         logger.info("Handling search step")
