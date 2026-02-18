@@ -15,22 +15,17 @@ class CacheManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         logger.info("CacheManager initialized")
 
-    # --------------------------------------------
-    # Generate filename from URL (hash-based)
-    # --------------------------------------------
+    # =====================================================
+    # URL PAGE CACHE
+    # =====================================================
+
     def _get_cache_path(self, url):
         url_hash = hashlib.md5(url.encode()).hexdigest()
         return self.cache_dir / f"{url_hash}.json"
 
-    # --------------------------------------------
-    # Check if cache entry is expired
-    # --------------------------------------------
     def _is_expired(self, timestamp):
         return (time.time() - timestamp) > self.expiry_seconds
 
-    # --------------------------------------------
-    # Get cached content if available and valid
-    # --------------------------------------------
     def get(self, url):
         path = self._get_cache_path(url)
 
@@ -52,9 +47,6 @@ class CacheManager:
             logger.warning(f"Cache read failed for {url}: {str(e)}")
             return None
 
-    # --------------------------------------------
-    # Save content to cache
-    # --------------------------------------------
     def set(self, url, content):
         path = self._get_cache_path(url)
 
@@ -70,46 +62,88 @@ class CacheManager:
         except Exception as e:
             logger.warning(f"Cache write failed for {url}: {str(e)}")
 
+    # =====================================================
+    # EXTRACTION CACHE
+    # =====================================================
 
-            # --------------------------------------------
-        # Extraction Cache Path
-        # --------------------------------------------
     def _get_extraction_cache_path(self):
         return self.cache_dir / "extracted_data.json"
 
-
-        # --------------------------------------------
-        # Get cached extraction result
-        # --------------------------------------------
     def get_extraction_cache(self):
         path = self._get_extraction_cache_path()
+
         if not path.exists():
             return None
 
         try:
             with open(path, "r", encoding="utf-8") as f:
                 cached = json.load(f)
-                if self._is_expired(cached["timestamp"]):
-                    logger.info("Extraction cache expired")
-                    return None
-                logger.info("Extraction cache hit")
-                return cached["content"]
-        except Exception:                
+
+            if self._is_expired(cached["timestamp"]):
+                logger.info("Extraction cache expired")
+                return None
+
+            logger.info("Extraction cache hit")
+            return cached["content"]
+
+        except Exception as e:
+            logger.warning(f"Extraction cache read failed: {str(e)}")
             return None
 
-
-        # --------------------------------------------
-        # Save extraction cache
-        # --------------------------------------------
     def set_extraction_cache(self, content):
         path = self._get_extraction_cache_path()
+
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "timestamp": time.time(),
                     "content": content
                 }, f)
+
             logger.info("Extraction results cached")
+
         except Exception as e:
             logger.warning(f"Failed to cache extraction results: {str(e)}")
 
+    # =====================================================
+    # CONSOLIDATION CACHE
+    # =====================================================
+
+    def _get_consolidation_cache_path(self):
+        return self.cache_dir / "consolidated_output.json"
+
+    def get_consolidation_cache(self):
+        path = self._get_consolidation_cache_path()
+
+        if not path.exists():
+            return None
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+
+            if self._is_expired(cached["timestamp"]):
+                logger.info("Consolidation cache expired")
+                return None
+
+            logger.info("Consolidation cache hit")
+            return cached["content"]
+
+        except Exception as e:
+            logger.warning(f"Consolidation cache read failed: {str(e)}")
+            return None
+
+    def set_consolidation_cache(self, content):
+        path = self._get_consolidation_cache_path()
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "timestamp": time.time(),
+                    "content": content
+                }, f)
+
+            logger.info("Consolidated output cached")
+
+        except Exception as e:
+            logger.warning(f"Failed to cache consolidation output: {str(e)}")
