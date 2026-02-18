@@ -44,11 +44,30 @@ class CompetitiveAnalysisAgent:
     # COMPETITOR EXTRACTION
     # ===============================
     def _extract_competitors(self, data: Dict[str, Any]) -> List[str]:
+        """
+        Handles two formats:
+          1. ExtractionEngine format:
+               {"entities": {"organizations": [...], "people": [...], "locations": [...]}}
+          2. Test / legacy format:
+               {"entities": [{"text": "CompanyA", "label": "ORG"}, ...]}
+        """
         competitors = []
 
-        for entity in data.get("entities", []):
-            if entity.get("label") == "ORG":
-                competitors.append(entity.get("text"))
+        entities = data.get("entities", {})
+
+        # --- Format 1: dict with sub-keys (ExtractionEngine output) ---
+        if isinstance(entities, dict):
+            orgs = entities.get("organizations", [])
+            if isinstance(orgs, list):
+                competitors.extend([org for org in orgs if org])
+
+        # --- Format 2: list of dicts (test / legacy format) ---
+        elif isinstance(entities, list):
+            for entity in entities:
+                if isinstance(entity, dict) and entity.get("label") == "ORG":
+                    text = entity.get("text", "")
+                    if text:
+                        competitors.append(text)
 
         return list(set(competitors))
 
@@ -72,9 +91,26 @@ class CompetitiveAnalysisAgent:
     # FEATURE EXTRACTION
     # ===============================
     def _extract_features(self, data: Dict[str, Any]) -> List[str]:
+        """
+        Handles keywords as either:
+          - list of strings  (ExtractionEngine output)
+          - dict / Counter   (fallback)
+        """
         features = []
 
-        for keyword in data.get("keywords", []):
+        raw_keywords = data.get("keywords", [])
+
+        # Normalise to a flat list of strings
+        if isinstance(raw_keywords, dict):
+            keywords = list(raw_keywords.keys())
+        elif isinstance(raw_keywords, list):
+            keywords = raw_keywords
+        else:
+            keywords = []
+
+        for keyword in keywords:
+            if not isinstance(keyword, str):
+                continue
             if any(word in keyword.lower() for word in
                    ["api", "mobile", "ai", "automation",
                     "integration", "analytics", "dashboard"]):

@@ -157,42 +157,142 @@ class WorkflowController:
     # MERGE EXTRACTION OUTPUT
     # ===================================================
     def merge_extracted_data(self, extracted_pages):
+        """
+        Normalises ExtractionEngine output into the unified schema that all
+        analysis agents expect:
 
-        merged = {
-            "currencies": [],
-            "percentages": [],
-            "entities": [],
-            "keywords": []
+        {
+            "currencies":   [{"value": int, "context": str}, ...],
+            "percentages":  [{"value": float, "context": str}, ...],
+            "entities":     {"organizations": [...], "people": [...], "locations": [...]},
+            "keywords":     [str, ...]
         }
 
-        # If extraction already returns merged dict
-        if isinstance(extracted_pages, dict):
-            return extracted_pages
+        ExtractionEngine.process() returns a dict with this shape:
+        {
+            "entities":          {"organizations": [...], "people": [...], "locations": [...]},
+            "financial_metrics": {"startup_costs": [...], "revenue_figures": [...],
+                                  "funding_amounts": [...], "market_sizes": [...],
+                                  "growth_rates": [...]},
+            "keywords":          [str, ...]
+        }
+        """
 
-        # If extraction returns list of pages
+        # -------------------------------------------------------
+        # Already in the expected unified format — pass through
+        # -------------------------------------------------------
+        if isinstance(extracted_pages, dict):
+            # If it already has currencies/percentages keys it's already merged
+            if "currencies" in extracted_pages or "percentages" in extracted_pages:
+                return extracted_pages
+
+            # Convert ExtractionEngine dict → unified format
+            return self._convert_extraction_engine_output(extracted_pages)
+
+        # -------------------------------------------------------
+        # Legacy list-of-pages format
+        # -------------------------------------------------------
         if isinstance(extracted_pages, list):
+            merged = {
+                "currencies": [],
+                "percentages": [],
+                "entities": {"organizations": [], "people": [], "locations": []},
+                "keywords": []
+            }
+
             for page in extracted_pages:
                 if not isinstance(page, dict):
                     continue
 
-                currencies = page.get("currencies", [])
-                percentages = page.get("percentages", [])
-                entities = page.get("entities", [])
-                keywords = page.get("keywords", [])
+                # currencies / percentages may already be structured
+                for key in ("currencies", "percentages"):
+                    val = page.get(key, [])
+                    if isinstance(val, list):
+                        merged[key].extend(val)
 
-                if isinstance(currencies, list):
-                    merged["currencies"].extend(currencies)
+                # entities
+                page_entities = page.get("entities", {})
+                if isinstance(page_entities, dict):
+                    for sub in ("organizations", "people", "locations"):
+                        items = page_entities.get(sub, [])
+                        if isinstance(items, list):
+                            merged["entities"][sub].extend(items)
+                elif isinstance(page_entities, list):
+                    # legacy list-of-dicts format
+                    for ent in page_entities:
+                        if isinstance(ent, dict):
+                            label = ent.get("label", "")
+                            text = ent.get("text", "")
+                            if label == "ORG":
+                                merged["entities"]["organizations"].append(text)
+                            elif label == "PERSON":
+                                merged["entities"]["people"].append(text)
+                            elif label in ("GPE", "LOC"):
+                                merged["entities"]["locations"].append(text)
 
-                if isinstance(percentages, list):
-                    merged["percentages"].extend(percentages)
+                # keywords
+                kw = page.get("keywords", [])
+                if isinstance(kw, list):
+                    merged["keywords"].extend(kw)
+                elif isinstance(kw, dict):
+                    merged["keywords"].extend(list(kw.keys()))
 
-                if isinstance(entities, list):
-                    merged["entities"].extend(entities)
+            return merged
 
-                if isinstance(keywords, list):
-                    merged["keywords"].extend(keywords)
+        # Fallback — return empty structure
+        logger.error("merge_extracted_data received unexpected type; returning empty structure")
+        return {
+            "currencies": [],
+            "percentages": [],
+            "entities": {"organizations": [], "people": [], "locations": []},
+            "keywords": []
+        }
 
-        return merged
+    def _convert_extraction_engine_output(self, data: dict) -> dict:
+        """
+        Converts ExtractionEngine.process() output to unified analysis schema.
+
+        financial_metrics keys → currencies / percentages lists with context tags
+        so FinancialAnalysisAgent and MarketAnalysisAgent can consume them.
+        """
+        financial_metrics = data.get("financial_metrics", {})
+
+        currencies = []
+        percentages = []
+
+        context_map = {
+            "startup_costs":    "cost expense",
+            "revenue_figures":  "revenue income",
+            "funding_amounts":  "funding raised seed",
+            "market_sizes":     "market size valuation",
+        }
+
+        for metric_key, context_hint in context_map.items():
+            for value in financial_metrics.get(metric_key, []):
+                try:
+                    currencies.append({"value": float(value), "context": context_hint})
+                except (TypeError, ValueError):
+                    continue
+
+        for rate in financial_metrics.get("growth_rates", []):
+            try:
+                percentages.append({"value": float(rate), "context": "growth cagr"})
+            except (TypeError, ValueError):
+                continue
+
+        # keywords: ExtractionEngine returns a plain list of strings
+        raw_keywords = data.get("keywords", [])
+        if isinstance(raw_keywords, dict):
+            keywords = list(raw_keywords.keys())
+        else:
+            keywords = list(raw_keywords)
+
+        return {
+            "currencies": currencies,
+            "percentages": percentages,
+            "entities": data.get("entities", {"organizations": [], "people": [], "locations": []}),
+            "keywords": keywords
+        }
 
     # ===================================================
     # ANALYSIS (PHASE 5)
