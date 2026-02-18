@@ -7,7 +7,9 @@ from ..ui.cli_interface import collect_user_input
 from ..agents.intake_agent import IntakeAgent
 from ..agents.search_engine import SearchEngine
 from ..agents.web_scraper import WebScraper
-
+from ..agents.financial_analysis import FinancialAnalysisAgent, FinancialConfig
+from ..agents.competitive_analysis import CompetitiveAnalysisAgent
+from ..agents.market_analysis import MarketAnalysisAgent
 
 logger = setup_logger()
 
@@ -19,14 +21,15 @@ class WorkflowController:
         self.cache_manager = CacheManager()
         logger.info("WorkflowController initialized")
 
-    # ---------------------------------------------------
+    # ===================================================
     # MAIN FSM LOOP
-    # ---------------------------------------------------
+    # ===================================================
     def run(self):
         logger.info("Workflow started")
 
         try:
             while self.state_manager.current_state != SystemState.COMPLETED:
+
                 current_state = self.state_manager.current_state
 
                 if current_state == SystemState.INITIALIZED:
@@ -41,14 +44,11 @@ class WorkflowController:
                 elif current_state == SystemState.SCRAPING:
                     self.handle_extraction()
 
-                elif current_state == SystemState.EXTRACTING:
+                elif current_state == SystemState.ANALYZING:
                     self.handle_analysis()
 
-                elif current_state == SystemState.ANALYZING:
-                    self.handle_consolidation()
-
                 elif current_state == SystemState.CONSOLIDATING:
-                    self.handle_report_generation()
+                    self.handle_consolidation()
 
                 elif current_state == SystemState.GENERATING_REPORT:
                     self.finish_workflow()
@@ -65,31 +65,29 @@ class WorkflowController:
             logger.error(f"Critical workflow failure: {str(e)}")
             self.state_manager.add_error(str(e))
 
-    # ---------------------------------------------------
-    # INITIALIZED → INPUT_RECEIVED
-    # Collect user input and run it through Intake Agent
-    # ---------------------------------------------------
+    # ===================================================
+    # INITIALIZATION
+    # ===================================================
     def handle_initialization(self):
-        logger.info("Starting Phase 2 intake pipeline")
+        logger.info("Starting intake pipeline")
 
         raw_input = self.state_manager.data.get("test_input")
 
         if not raw_input:
             raw_input = collect_user_input()
 
-
         agent = IntakeAgent()
         structured_input = agent.process(raw_input)
 
         save_structured_input(structured_input)
 
+        self.state_manager.add_data("structured_input", structured_input)
         self.state_manager.update_progress(20)
         self.state_manager.update_state(SystemState.INPUT_RECEIVED)
 
-    # ---------------------------------------------------
-    # INPUT_RECEIVED → SEARCHING
-    # Run search queries from structured input
-    # ---------------------------------------------------
+    # ===================================================
+    # SEARCH
+    # ===================================================
     def handle_search(self):
         logger.info("Handling search phase")
 
@@ -102,22 +100,16 @@ class WorkflowController:
         search_engine = SearchEngine(max_results_per_query=5)
         results = search_engine.search(structured_input)
 
-        logger.info(f"Search returned {len(results)} results")
-
         if results:
+            self.state_manager.add_data("search_results", results)
             self.state_manager.update_progress(40)
-            # SearchEngine.search() sets state to SEARCHING internally.
-            # If for any reason it didn't, we enforce it here.
-            if self.state_manager.current_state != SystemState.SEARCHING:
-                self.state_manager.update_state(SystemState.SEARCHING)
+            self.state_manager.update_state(SystemState.SEARCHING)
         else:
             self.state_manager.add_error("Search returned empty result list")
 
-    # ---------------------------------------------------
-    # SEARCHING → SCRAPING
-    # Scrape URLs returned by search engine.
-    # Cache is checked per-URL before fetching.
-    # ---------------------------------------------------
+    # ===================================================
+    # SCRAPING
+    # ===================================================
     def handle_scraping(self):
         logger.info("Handling scraping phase")
 
@@ -127,135 +119,170 @@ class WorkflowController:
             self.state_manager.add_error("No search results available for scraping")
             return
 
-        # --- Cache-aware scraping ---
-        # Split URLs into cached hits and those that need live fetching
-        urls_to_scrape = []
-        cached_pages = []
+        scraper = WebScraper(max_parallel=5)
+        scraped_content = scraper.scrape(search_results)
 
-        for item in search_results:
-            url = item.get("url")
-            if not url:
-                continue
-
-            cached = self.cache_manager.get(url)
-            if cached:
-                cached_pages.append(cached)
-                logger.info(f"Cache hit — skipping fetch for: {url}")
-            else:
-                urls_to_scrape.append(item)
-
-        logger.info(
-            f"Cache hits: {len(cached_pages)} | "
-            f"URLs to scrape live: {len(urls_to_scrape)}"
-        )
-
-        # Scrape only the URLs not in cache
-        freshly_scraped = []
-        if urls_to_scrape:
-            scraper = WebScraper(max_parallel=5)
-            # WebScraper.scrape() sets state to SCRAPING internally
-            freshly_scraped = scraper.scrape(urls_to_scrape)
-
-            # Save each freshly scraped page to cache for future runs
-            for page in freshly_scraped:
-                if page and page.get("url"):
-                    self.cache_manager.set(page["url"], page)
-        else:
-            # No live scraping needed — manually set state to SCRAPING
-            # so the FSM loop advances correctly
-            self.state_manager.update_state(SystemState.SCRAPING)
-
-        # Combine cached + fresh results
-        all_scraped = cached_pages + freshly_scraped
-
-        logger.info(f"Total pages available after scraping: {len(all_scraped)}")
-
-        if all_scraped:
-            self.state_manager.add_data("scraped_content", all_scraped)
+        if scraped_content:
+            self.state_manager.add_data("scraped_content", scraped_content)
             self.state_manager.update_progress(70)
             self.state_manager.update_state(SystemState.SCRAPING)
         else:
             self.state_manager.add_error("Scraping returned no usable data")
 
-    # ---------------------------------------------------
-    # SCRAPING → EXTRACTING
-    # Placeholder — Phase 4 will replace this with
-    # regex + spaCy extraction engine
-    # ---------------------------------------------------
+    # ===================================================
+    # EXTRACTION
+    # ===================================================
     def handle_extraction(self):
         logger.info("Handling extraction phase")
 
         scraped_content = self.state_manager.data.get("scraped_content")
+
         if not scraped_content:
             self.state_manager.add_error("No scraped content found for extraction")
             return
 
-        # ------------------------------------
-        # Check Extraction Cache
-        # ------------------------------------
-        cached_extraction = self.cache_manager.get_extraction_cache()
-
-        if cached_extraction:
-            logger.info("Using cached extraction results")
-            self.state_manager.add_data("extracted_data", cached_extraction)
-            self.state_manager.update_progress(80)
-            self.state_manager.update_state(SystemState.ANALYZING)
-            return
-
-        # ------------------------------------
-        # Run Extraction Engine
-        # ------------------------------------
         from src.agents.extraction_engine import ExtractionEngine
 
         extraction_engine = ExtractionEngine()
         structured_data = extraction_engine.process(scraped_content)
 
         if structured_data:
-            # Cache result
-            self.cache_manager.set_extraction_cache(structured_data)
-
+            self.state_manager.add_data("extracted_data", structured_data)
             self.state_manager.update_progress(80)
             self.state_manager.update_state(SystemState.ANALYZING)
         else:
             self.state_manager.add_error("Extraction failed")
 
-    def handle_analysis(self):
-        logger.info("Handling analysis phase (placeholder for Phase 4/5)")
+    # ===================================================
+    # MERGE EXTRACTION OUTPUT
+    # ===================================================
+    def merge_extracted_data(self, extracted_pages):
 
-        self.state_manager.add_data("analysis_summary", {
-            "note": "Full analysis implemented in Phase 4/5"
-        })
+        merged = {
+            "currencies": [],
+            "percentages": [],
+            "entities": [],
+            "keywords": []
+        }
+
+        # If extraction already returns merged dict
+        if isinstance(extracted_pages, dict):
+            return extracted_pages
+
+        # If extraction returns list of pages
+        if isinstance(extracted_pages, list):
+            for page in extracted_pages:
+                if not isinstance(page, dict):
+                    continue
+
+                currencies = page.get("currencies", [])
+                percentages = page.get("percentages", [])
+                entities = page.get("entities", [])
+                keywords = page.get("keywords", [])
+
+                if isinstance(currencies, list):
+                    merged["currencies"].extend(currencies)
+
+                if isinstance(percentages, list):
+                    merged["percentages"].extend(percentages)
+
+                if isinstance(entities, list):
+                    merged["entities"].extend(entities)
+
+                if isinstance(keywords, list):
+                    merged["keywords"].extend(keywords)
+
+        return merged
+
+    # ===================================================
+    # ANALYSIS (PHASE 5)
+    # ===================================================
+    def handle_analysis(self):
+        logger.info("Handling analysis phase")
+
+        raw_extracted = self.state_manager.data.get("extracted_data")
+        structured_input = self.state_manager.data.get("structured_input")
+
+        if not raw_extracted or not structured_input:
+            self.state_manager.add_error("Missing data for analysis")
+            return
+
+        extracted_data = self.merge_extracted_data(raw_extracted)
+
+        results = {}
+
+        # -------------------------
+        # Financial
+        # -------------------------
+        try:
+            financial_agent = FinancialAnalysisAgent(FinancialConfig())
+            financial_output = financial_agent.run(
+                extracted_data=extracted_data,
+                budget=structured_input.get("budget", 0)
+            )
+
+            self.cache_manager.set("financial_analysis", financial_output)
+            results["financial"] = financial_output
+
+        except Exception as e:
+            logger.error(f"Financial analysis failed: {e}")
+            results["financial"] = None
+
+        # -------------------------
+        # Competitive
+        # -------------------------
+        try:
+            competitive_agent = CompetitiveAnalysisAgent()
+            competitive_output = competitive_agent.run(extracted_data)
+
+            self.cache_manager.set("competitive_analysis", competitive_output)
+            results["competitive"] = competitive_output
+
+        except Exception as e:
+            logger.error(f"Competitive analysis failed: {e}")
+            results["competitive"] = None
+
+        # -------------------------
+        # Market
+        # -------------------------
+        try:
+            market_agent = MarketAnalysisAgent()
+            market_output = market_agent.run(extracted_data)
+
+            self.cache_manager.set("market_analysis", market_output)
+            results["market"] = market_output
+
+        except Exception as e:
+            logger.error(f"Market analysis failed: {e}")
+            results["market"] = None
+
+        self.state_manager.add_data("analysis_results", results)
 
         self.state_manager.update_progress(85)
-        self.state_manager.update_state(SystemState.ANALYZING)
+        self.state_manager.update_state(SystemState.CONSOLIDATING)
 
-    # ---------------------------------------------------
-    # ANALYZING → CONSOLIDATING
-    # Placeholder — Phase 5 will add Consolidation Agent
-    # ---------------------------------------------------
+    # ===================================================
+    # CONSOLIDATION (PHASE 6 NEXT)
+    # ===================================================
     def handle_consolidation(self):
-        logger.info("Handling consolidation phase (placeholder for Phase 5)")
+        logger.info("Handling consolidation phase (placeholder)")
+
+        analysis_results = self.state_manager.data.get("analysis_results")
+
+        if not analysis_results:
+            self.state_manager.add_error("No analysis results found for consolidation")
+            return
 
         self.state_manager.add_data("consolidated_report", {
-            "note": "Full consolidation implemented in Phase 5"
+            "note": "Consolidation Agent will be implemented in Phase 6"
         })
 
         self.state_manager.update_progress(90)
-        self.state_manager.update_state(SystemState.CONSOLIDATING)
-
-    # ---------------------------------------------------
-    # CONSOLIDATING → GENERATING_REPORT
-    # Placeholder — Phase 4 will add PDF/PPT generators
-    # ---------------------------------------------------
-    def handle_report_generation(self):
-        logger.info("Handling report generation phase (placeholder for Phase 4)")
-
-        self.state_manager.update_progress(95)
         self.state_manager.update_state(SystemState.GENERATING_REPORT)
 
-    # ---------------------------------------------------
-    # GENERATING_REPORT → COMPLETED
-    # ---------------------------------------------------
+    # ===================================================
+    # FINISH
+    # ===================================================
     def finish_workflow(self):
         logger.info("Workflow completed successfully")
 
