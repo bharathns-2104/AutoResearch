@@ -87,7 +87,8 @@ class ExtractionEngine:
 
     def extract_contextual_financials(self, text):
         money_pattern = r"\$\s?\d+(?:[\.,]\d+)?\s?[kmbKMB]?"
-        percent_pattern = r"\d+(?:\.\d+)?\s?%"
+        percent_pattern = r"\b\d+(?:\.\d+)?%"
+
 
         financial_data = {
             "startup_costs": [],
@@ -97,7 +98,7 @@ class ExtractionEngine:
             "growth_rates": []
         }
 
-        sentences = re.split(r"[.!?]", text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
 
         for sentence in sentences:
             sentence_lower = sentence.lower()

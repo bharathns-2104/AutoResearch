@@ -72,7 +72,11 @@ class WorkflowController:
     def handle_initialization(self):
         logger.info("Starting Phase 2 intake pipeline")
 
-        raw_input = collect_user_input()
+        raw_input = self.state_manager.data.get("test_input")
+
+        if not raw_input:
+            raw_input = collect_user_input()
+
 
         agent = IntakeAgent()
         structured_input = agent.process(raw_input)
