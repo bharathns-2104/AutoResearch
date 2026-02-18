@@ -77,23 +77,33 @@ class ConsolidationAgent:
             market_score
         )
 
-        overall_rating = self._classify_overall_rating(overall_score)
-
-        # Aggregate risks
+        # -------------------------------------------------
+        # Aggregate risks FIRST
+        # -------------------------------------------------
         risks = self._aggregate_risks(financial, competitive, market)
 
-        # Generate recommendations
-        recommendations = self._generate_recommendations(
+        # -------------------------------------------------
+        # Apply risk penalties
+        # -------------------------------------------------
+        risk_adjusted_score, total_penalty = self._apply_risk_penalty(
             overall_score,
             risks
         )
 
-        # Decision
-        decision = self._make_decision(overall_score)
+        overall_rating = self._classify_overall_rating(risk_adjusted_score)
 
-        # Executive summary
+        # -------------------------------------------------
+        # Recommendations + Decision should use adjusted score
+        # -------------------------------------------------
+        recommendations = self._generate_recommendations(
+            risk_adjusted_score,
+            risks
+        )
+
+        decision = self._make_decision(risk_adjusted_score)
+
         summary = self._generate_summary(
-            overall_score,
+            risk_adjusted_score,
             overall_rating,
             financial,
             market,
@@ -104,7 +114,7 @@ class ConsolidationAgent:
             financial_score=round(financial_score, 2),
             market_score=round(market_score, 2),
             competitive_score=round(competitive_score, 2),
-            overall_viability_score=round(overall_score, 2),
+            overall_viability_score=round(risk_adjusted_score, 2),  # FIXED
             overall_rating=overall_rating,
             aggregated_risks=risks,
             final_recommendations=recommendations,
@@ -116,11 +126,13 @@ class ConsolidationAgent:
                     "financial": 0.4,
                     "market": 0.3,
                     "competitive": 0.3
-                }
+                },
+                "risk_penalty_applied": round(total_penalty, 3)
             }
         )
 
         return consolidated.to_dict()
+
 
     # ======================================================
     # SCORE EXTRACTION
@@ -299,3 +311,26 @@ class ConsolidationAgent:
         summary += "Overall evaluation is based on weighted financial, market, and competitive analysis."
 
         return summary
+
+    # ======================================================
+    # RISK-ADJUSTED SCORING
+    # ======================================================
+
+    def _apply_risk_penalty(self, base_score, risks):
+
+        penalty = 0.0
+
+        for risk in risks:
+            if risk.severity == "High":
+                penalty += 0.05
+            elif risk.severity == "Medium":
+                penalty += 0.02
+            elif risk.severity == "Low":
+                penalty += 0.01
+
+        adjusted_score = base_score - penalty
+
+        # Clamp between 0 and 1
+        adjusted_score = max(0.0, min(1.0, adjusted_score))
+
+        return adjusted_score, penalty
