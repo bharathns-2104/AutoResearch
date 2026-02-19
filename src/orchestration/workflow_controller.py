@@ -32,6 +32,7 @@ class WorkflowController:
                 current_state = self.state_manager.current_state
 
                 if current_state == SystemState.COMPLETED:
+                    self.finish_workflow()
                     break
 
                 if current_state == SystemState.ERROR:
@@ -57,7 +58,7 @@ class WorkflowController:
                     self.handle_consolidation()
 
                 elif current_state == SystemState.GENERATING_REPORT:
-                    self.finish_workflow()
+                    self.handle_report_generation()
 
                 else:
                     self.logger.error(f"Unknown state encountered: {current_state}")
@@ -198,7 +199,7 @@ class WorkflowController:
         try:
             results = {}
 
-            # ---------------- FINANCIAL ----------------
+            # FINANCIAL
             financial_agent = FinancialAnalysisAgent(FinancialConfig())
             financial_output = financial_agent.run(
                 extracted_data=raw_extracted,
@@ -206,12 +207,12 @@ class WorkflowController:
             )
             results["financial"] = financial_output
 
-            # ---------------- COMPETITIVE ----------------
+            # COMPETITIVE
             competitive_agent = CompetitiveAnalysisAgent()
             competitive_output = competitive_agent.run(raw_extracted)
             results["competitive"] = competitive_output
 
-            # ---------------- MARKET ----------------
+            # MARKET
             market_agent = MarketAnalysisAgent()
             market_output = market_agent.run(raw_extracted)
             results["market"] = market_output
@@ -236,7 +237,6 @@ class WorkflowController:
             return
 
         try:
-            # Check cache
             cached = self.cache_manager.get_consolidation_cache()
 
             if cached:
@@ -256,11 +256,37 @@ class WorkflowController:
             self._fail(f"Consolidation failed: {str(e)}")
 
     # ===================================================
-    # FINISH
+    # REPORT GENERATION (PHASE 7)
+    # ===================================================
+    def handle_report_generation(self):
+        self.logger.info("Handling report generation phase")
+
+        consolidated = self.state_manager.data.get("consolidated_output")
+
+        if not consolidated:
+            self._fail("No consolidated output found for report generation")
+            return
+
+        try:
+            from ..output.report_generator import ReportGenerator
+
+            generator = ReportGenerator()
+            report_paths = generator.generate(consolidated)
+
+            if not report_paths:
+                self._fail("Report generation returned no output paths")
+                return
+
+            self.state_manager.add_data("report_paths", report_paths)
+            self.state_manager.update_progress(100)
+            self.state_manager.update_state(SystemState.COMPLETED)
+
+        except Exception as e:
+            self._fail(f"Report generation failed: {str(e)}")
+
+    # ===================================================
+    # FINALIZATION
     # ===================================================
     def finish_workflow(self):
-        self.logger.info("Workflow completed successfully")
-
-        self.state_manager.update_progress(100)
-        self.state_manager.update_state(SystemState.COMPLETED)
+        self.logger.info("Workflow finalized")
         self.state_manager.dump_to_file()

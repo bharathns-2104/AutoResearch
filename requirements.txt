@@ -12,3 +12,5 @@ pytest
 black
 flake8
 ddgs
+matplotlib
+

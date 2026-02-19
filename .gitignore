@@ -6,3 +6,7 @@ __pycache__/
 .env
 logs/
 data/cache/
+reports/
+*.pdf
+*.pptx
+reports/temp
