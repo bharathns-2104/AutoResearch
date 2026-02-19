@@ -3,7 +3,7 @@ REPORT_SETTINGS = {
     "generate_ppt": True,
     "output_directory": "reports",
     "include_charts": True,
-    "project_title": "AutoResearch - Batch 9"
+    "project_title": "AutoResearch - Batch 9",
     "section_order": [
         "title_page",
         "executive_summary",

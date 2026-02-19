@@ -1,6 +1,5 @@
 import pytest
-from agents.extraction_engine import ExtractionEngine
-
+from src.agents.extraction_engine import ExtractionEngine
 
 @pytest.fixture
 def engine():

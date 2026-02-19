@@ -1,4 +1,4 @@
-from orchestration.state_manager import StateManager, SystemState
+from src.orchestration.state_manager import StateManager, SystemState
 
 
 def test_singleton_behavior():
