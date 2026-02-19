@@ -3,7 +3,7 @@ from src.orchestration.state_manager import StateManager, SystemState
 
 
 def test_workflow_completion():
-    StateManager._instance = None
+    StateManager.reset()
 
     controller = WorkflowController()
 

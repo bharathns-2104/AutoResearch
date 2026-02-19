@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 from collections import Counter
 from difflib import SequenceMatcher
-
+from src.config.settings import COMPETITIVE_INTENSITY_THRESHOLDS
 
 class CompetitiveAnalysisAgent:
 
@@ -119,15 +119,27 @@ class CompetitiveAnalysisAgent:
         return features
 
     # ===============================
-    # COMPETITIVE INTENSITY
+    # COMPETITIVE INTENSITY (CONFIGURABLE: Issue #9)
     # ===============================
     def _calculate_competitive_intensity(self, competitors: List[str]) -> str:
-
+        """
+        Classify competitive intensity based on number of competitors.
+        
+        Thresholds are configurable in src/config/settings.py:
+        COMPETITIVE_INTENSITY_THRESHOLDS
+        
+        Industry rationale:
+        - Low (< 5): Niche markets with few established players
+        - Medium (5-15): Moderate competition with differentiation opportunities
+        - High (> 15): Saturated markets with many competitors
+        """
         count = len(competitors)
+        low_max = COMPETITIVE_INTENSITY_THRESHOLDS.get("low_max", 5)
+        medium_max = COMPETITIVE_INTENSITY_THRESHOLDS.get("medium_max", 15)
 
-        if count < 5:
+        if count < low_max:
             return "Low"
-        elif 5 <= count <= 15:
+        elif count <= medium_max:
             return "Medium"
         else:
             return "High"

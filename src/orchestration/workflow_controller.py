@@ -2,6 +2,7 @@ from .state_manager import StateManager, SystemState
 from .logger import setup_logger
 from .input_handler import save_structured_input
 from .cache_manager import CacheManager
+from ..config.settings import SCRAPING_SETTINGS
 
 from ..ui.cli_interface import collect_user_input
 from ..agents.intake_agent import IntakeAgent
@@ -51,6 +52,9 @@ class WorkflowController:
                 elif current_state == SystemState.SCRAPING:
                     self.handle_extraction()
 
+                elif current_state == SystemState.EXTRACTING:
+                    self.handle_analysis()
+
                 elif current_state == SystemState.ANALYZING:
                     self.handle_analysis()
 
@@ -72,9 +76,15 @@ class WorkflowController:
     # ERROR HANDLER
     # ===================================================
     def _fail(self, message):
+        """Hard failure: Stop workflow entirely (for critical stages)."""
         self.logger.error(message)
         self.state_manager.add_error(message)
         self.state_manager.update_state(SystemState.ERROR)
+
+    def _warn_partial(self, message):
+        """Soft failure: Log warning but continue with partial data (graceful degradation)."""
+        self.logger.warning(message)
+        self.state_manager.add_error(f"[PARTIAL] {message}")
 
     # ===================================================
     # INITIALIZATION
@@ -128,7 +138,7 @@ class WorkflowController:
             self._fail(f"Search failed: {str(e)}")
 
     # ===================================================
-    # SCRAPING
+    # SCRAPING (GRACEFUL DEGRADATION: Issue #12)
     # ===================================================
     def handle_scraping(self):
         self.logger.info("Handling scraping phase")
@@ -143,19 +153,36 @@ class WorkflowController:
             scraper = WebScraper(max_parallel=5)
             scraped_content = scraper.scrape(search_results)
 
+            # GRACEFUL DEGRADATION: Check if we have minimum useful data
+            min_threshold = SCRAPING_SETTINGS.get("min_pages_threshold", 3)
+            
             if not scraped_content:
                 self._fail("Scraping returned no usable data")
                 return
+            
+            if len(scraped_content) < min_threshold:
+                # Only ONE page scraped, but allow it to proceed with a warning
+                self._warn_partial(
+                    f"Scraping returned only {len(scraped_content)} page(s), "
+                    f"minimum threshold is {min_threshold}. Proceeding with partial data."
+                )
+            else:
+                self.logger.info(
+                    f"Successfully scraped {len(scraped_content)} pages "
+                    f"(threshold: {min_threshold})"
+                )
 
             self.state_manager.add_data("scraped_content", scraped_content)
+            self.state_manager.add_data("scraping_partial", len(scraped_content) < min_threshold)
             self.state_manager.update_progress(60)
             self.state_manager.update_state(SystemState.SCRAPING)
 
         except Exception as e:
             self._fail(f"Scraping failed: {str(e)}")
 
+
     # ===================================================
-    # EXTRACTION
+    # EXTRACTION (GRACEFUL DEGRADATION: Issue #7)
     # ===================================================
     def handle_extraction(self):
         self.logger.info("Handling extraction phase")
@@ -172,19 +199,42 @@ class WorkflowController:
             extraction_engine = ExtractionEngine()
             structured_data = extraction_engine.process(scraped_content)
 
+            # GRACEFUL DEGRADATION: Allow empty entities but with warning
             if not structured_data:
-                self._fail("Extraction returned empty output")
-                return
+                self._warn_partial("Extraction returned minimal output (empty extraction)")
+                # Create a minimal valid structure to continue
+                structured_data = {
+                    "entities": {"organizations": [], "people": [], "locations": []},
+                    "financial_metrics": {
+                        "startup_costs": [],
+                        "revenue_figures": [],
+                        "funding_amounts": [],
+                        "market_sizes": [],
+                        "growth_rates": []
+                    },
+                    "keywords": []
+                }
+            
+            extraction_partial = any([
+                not structured_data.get("entities", {}).get("organizations", []),
+                not structured_data.get("financial_metrics", {}).get("growth_rates", []),
+                not structured_data.get("keywords", [])
+            ])
+            
+            if extraction_partial:
+                self._warn_partial("Extraction returned partial data (missing some entities/metrics)")
 
             self.state_manager.add_data("extracted_data", structured_data)
+            self.state_manager.add_data("extraction_partial", extraction_partial)
             self.state_manager.update_progress(75)
-            self.state_manager.update_state(SystemState.ANALYZING)
+            self.state_manager.update_state(SystemState.EXTRACTING)
 
         except Exception as e:
             self._fail(f"Extraction failed: {str(e)}")
 
+
     # ===================================================
-    # ANALYSIS (PHASE 5)
+    # ANALYSIS (GRACEFUL DEGRADATION: Issue #7)
     # ===================================================
     def handle_analysis(self):
         self.logger.info("Handling analysis phase")
@@ -198,34 +248,95 @@ class WorkflowController:
 
         try:
             results = {}
+            analysis_failures = []
 
-            # FINANCIAL
-            financial_agent = FinancialAnalysisAgent(FinancialConfig())
-            financial_output = financial_agent.run(
-                extracted_data=raw_extracted,
-                budget=structured_input.get("budget", 0)
-            )
-            results["financial"] = financial_output
+            # FINANCIAL ANALYSIS
+            try:
+                financial_agent = FinancialAnalysisAgent(FinancialConfig())
+                results["financial"] = financial_agent.run(
+                    extracted_data=raw_extracted,
+                    budget=structured_input.get("budget", 0)
+                )
+            except Exception as e:
+                self._warn_partial(f"Financial analysis failed: {str(e)}")
+                analysis_failures.append("financial")
+                results["financial"] = self._default_analysis_output("financial")
 
-            # COMPETITIVE
-            competitive_agent = CompetitiveAnalysisAgent()
-            competitive_output = competitive_agent.run(raw_extracted)
-            results["competitive"] = competitive_output
+            # COMPETITIVE ANALYSIS
+            try:
+                competitive_agent = CompetitiveAnalysisAgent()
+                results["competitive"] = competitive_agent.run(raw_extracted)
+            except Exception as e:
+                self._warn_partial(f"Competitive analysis failed: {str(e)}")
+                analysis_failures.append("competitive")
+                results["competitive"] = self._default_analysis_output("competitive")
 
-            # MARKET
-            market_agent = MarketAnalysisAgent()
-            market_output = market_agent.run(raw_extracted)
-            results["market"] = market_output
+            # MARKET ANALYSIS
+            try:
+                market_agent = MarketAnalysisAgent()
+                results["market"] = market_agent.run(raw_extracted)
+            except Exception as e:
+                self._warn_partial(f"Market analysis failed: {str(e)}")
+                analysis_failures.append("market")
+                results["market"] = self._default_analysis_output("market")
+
+            # If ALL analyses failed, that's a real problem
+            if len(analysis_failures) == 3:
+                self._fail("All analysis stages failed - cannot proceed")
+                return
+
+            if analysis_failures:
+                self._warn_partial(
+                    f"Partial analysis: {', '.join(analysis_failures)} stages failed"
+                )
 
             self.state_manager.add_data("analysis_results", results)
+            self.state_manager.add_data("analysis_partial", bool(analysis_failures))
             self.state_manager.update_progress(85)
             self.state_manager.update_state(SystemState.CONSOLIDATING)
 
         except Exception as e:
             self._fail(f"Analysis failed: {str(e)}")
 
+    def _default_analysis_output(self, analysis_type):
+        """Return a minimal valid output for failed analysis stages."""
+        defaults = {
+            "financial": {
+                "metrics": {},
+                "runway_months": 0,
+                "viability_score": 0.3,
+                "risks": [],
+                "recommendations": ["Insufficient financial data available"],
+                "summary": "Financial analysis could not be completed"
+            },
+            "competitive": {
+                "competitors_found": 0,
+                "top_competitors": [],
+                "competitive_intensity": "Unknown",
+                "swot_analysis": {
+                    "strengths": [],
+                    "weaknesses": [],
+                    "opportunities": [],
+                    "threats": []
+                },
+                "market_gaps": [],
+                "summary": "Competitive analysis could not be completed"
+            },
+            "market": {
+                "market_size": {"global": 0, "currency": "USD"},
+                "tam_sam_som": {"tam": 0, "sam": 0, "som": 0},
+                "growth_rate": 0,
+                "sentiment": {"score": 0, "label": "Unknown"},
+                "opportunity_score": 0.3,
+                "key_insights": [],
+                "summary": "Market analysis could not be completed"
+            }
+        }
+        return defaults.get(analysis_type, {})
+
+
     # ===================================================
-    # CONSOLIDATION (PHASE 6)
+    # CONSOLIDATION (GRACEFUL DEGRADATION: Issue #7)
     # ===================================================
     def handle_consolidation(self):
         self.logger.info("Handling consolidation phase")
@@ -248,12 +359,27 @@ class WorkflowController:
                 consolidated = agent.run(analysis_results)
                 self.cache_manager.set_consolidation_cache(consolidated)
 
+            # Check if consolidation is based on partial data
+            is_partial = (
+                self.state_manager.data.get("analysis_partial", False) or
+                self.state_manager.data.get("extraction_partial", False) or
+                self.state_manager.data.get("scraping_partial", False)
+            )
+            
+            if is_partial:
+                self._warn_partial(
+                    "Consolidation based on partial analysis data. "
+                    "Final report represents best-effort assessment."
+                )
+
             self.state_manager.add_data("consolidated_output", consolidated)
+            self.state_manager.add_data("consolidation_partial", is_partial)
             self.state_manager.update_progress(95)
             self.state_manager.update_state(SystemState.GENERATING_REPORT)
 
         except Exception as e:
             self._fail(f"Consolidation failed: {str(e)}")
+
 
     # ===================================================
     # REPORT GENERATION (PHASE 7)

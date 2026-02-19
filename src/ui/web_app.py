@@ -12,7 +12,6 @@ import streamlit as st
 
 from src.orchestration.workflow_controller import WorkflowController
 from src.orchestration.state_manager import StateManager, SystemState
-from src.agents.intake_agent import IntakeAgent
 
 
 # --------------------------------------------------
@@ -89,21 +88,9 @@ if submitted:
     controller = WorkflowController()
     state_manager = controller.state_manager
 
-    # -----------------------------
-    # FIX: RUN INTAKE AGENT FIRST
-    # -----------------------------
-    intake_agent = IntakeAgent()
-    structured_output = intake_agent.process(raw_input)
-
-    # Store intake output in state
-    state_manager.add_data("structured_input", structured_output)
-
-    # IMPORTANT: Make sure search_queries exist
-    if not structured_output.get("search_queries"):
-        st.error("Intake Agent failed to generate search queries.")
-        st.stop()
-
-    state_manager.update_state(SystemState.INPUT_RECEIVED)
+    # Inject raw input into state for workflow to process
+    state_manager.add_data("test_input", raw_input)
+    state_manager.update_state(SystemState.INITIALIZED)
 
     # -----------------------------
     # UI ELEMENTS
@@ -164,8 +151,8 @@ if submitted:
         report_paths = state_manager.data.get("report_paths")
 
         if report_paths:
-            if report_paths.get("pdf_path"):
-                with open(report_paths["pdf_path"], "rb") as f:
+            if report_paths.get("pdf"):
+                with open(report_paths["pdf"], "rb") as f:
                     st.download_button(
                         "Download PDF",
                         data=f,
@@ -173,8 +160,8 @@ if submitted:
                         mime="application/pdf"
                     )
 
-            if report_paths.get("ppt_path"):
-                with open(report_paths["ppt_path"], "rb") as f:
+            if report_paths.get("ppt"):
+                with open(report_paths["ppt"], "rb") as f:
                     st.download_button(
                         "Download PPT",
                         data=f,

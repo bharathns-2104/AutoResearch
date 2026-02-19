@@ -34,13 +34,14 @@ class MarketAnalysisAgent:
     # MARKET SIZE EXTRACTION
     # ===============================
     def _extract_market_size(self, data: Dict[str, Any]) -> Dict[str, Any]:
-
-        for item in data.get("currencies", []):
-            if "market" in item.get("context", "").lower():
-                return {
-                    "global": item["value"],
-                    "currency": "USD"
-                }
+        financial_metrics = data.get("financial_metrics", {})
+        market_sizes = financial_metrics.get("market_sizes", [])
+        
+        if market_sizes:
+            return {
+                "global": statistics.mean(market_sizes),
+                "currency": "USD"
+            }
 
         return {
             "global": 0,
@@ -51,14 +52,8 @@ class MarketAnalysisAgent:
     # GROWTH EXTRACTION
     # ===============================
     def _extract_growth_rate(self, data: Dict[str, Any]) -> float:
-
-        growth_rates = []
-
-        for item in data.get("percentages", []):
-            if any(word in item.get("context", "").lower()
-                   for word in ["growth", "cagr"]):
-                growth_rates.append(item["value"])
-
+        financial_metrics = data.get("financial_metrics", {})
+        growth_rates = financial_metrics.get("growth_rates", [])
         return statistics.mean(growth_rates) if growth_rates else 0
 
     # ===============================

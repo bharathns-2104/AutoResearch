@@ -32,6 +32,12 @@ class StateManager:
                 cls._instance._initialize()
         return cls._instance
 
+    @classmethod
+    def reset(cls):
+        """Reset singleton instance for testing purposes."""
+        with cls._lock:
+            cls._instance = None
+
     def _initialize(self):
         self.current_state = SystemState.INITIALIZED
         self.progress = 0

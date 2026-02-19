@@ -3,6 +3,7 @@ import spacy
 from collections import Counter
 from src.orchestration.logger import setup_logger
 from src.orchestration.state_manager import StateManager, SystemState
+from src.config.settings import EXTRACTION_SETTINGS
 
 logger = setup_logger()
 
@@ -152,6 +153,32 @@ class ExtractionEngine:
         return Counter(filtered)
 
     # ===================================================
+    # DYNAMIC KEYWORD FILTERING (Issue #11)
+    # ===================================================
+    def _get_keyword_threshold(self, num_pages):
+        """
+        Dynamically adjust keyword frequency threshold based on dataset size.
+        
+        Rationale: Small scrape sets (3-10 pages) will have low keyword frequencies.
+        Filtering with count > 2 for a 5-page dataset loses important signals.
+        
+        Thresholds from EXTRACTION_SETTINGS:
+        - 3-10 pages: threshold = 1 (small dataset)
+        - 10-30 pages: threshold = 2 (medium dataset)
+        - 30+ pages: threshold = 3 (large dataset)
+        """
+        threshold_small = EXTRACTION_SETTINGS.get("keyword_frequency_threshold_small", 1)
+        threshold_medium = EXTRACTION_SETTINGS.get("keyword_frequency_threshold_medium", 2)
+        threshold_large = EXTRACTION_SETTINGS.get("keyword_frequency_threshold_large", 3)
+        
+        if num_pages <= 10:
+            return threshold_small
+        elif num_pages <= 30:
+            return threshold_medium
+        else:
+            return threshold_large
+
+    # ===================================================
     # MAIN PROCESS METHOD
     # ===================================================
 
@@ -209,11 +236,26 @@ class ExtractionEngine:
             org for org, count in organization_counter.most_common(20)
         ]
 
-        # Filter keywords with frequency > 2
+        # DYNAMIC KEYWORD FILTERING (Issue #11)
+        # Adjust threshold based on number of pages (small sets need lower threshold)
+        num_pages = len(scraped_content)
+        dynamic_threshold = self._get_keyword_threshold(num_pages)
+        
+        logger.info(
+            f"Filtering keywords with dynamic threshold={dynamic_threshold} "
+            f"for {num_pages} pages (small:<10, medium:10-30, large:>30)"
+        )
+        
         top_keywords = [
             word for word, count in keyword_counter.most_common(30)
-            if count > 2
-        ][:20]
+            if count > dynamic_threshold
+        ][:EXTRACTION_SETTINGS.get("max_keywords_output", 20)]
+        
+        if len(top_keywords) < 5:
+            logger.warning(
+                f"Only {len(top_keywords)} keywords found after filtering. "
+                f"Consider lowering threshold for small datasets."
+            )
 
         structured_output = {
             "entities": {

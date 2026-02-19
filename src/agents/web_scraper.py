@@ -5,6 +5,7 @@ import time
 
 from src.orchestration.logger import setup_logger
 from src.orchestration.state_manager import StateManager, SystemState
+from src.orchestration.cache_manager import CacheManager
 
 logger = setup_logger()
 
@@ -19,13 +20,15 @@ class WebScraper:
         user_agent="AutoResearchBot/1.0"
     ):
         self.state = StateManager()
+        self.cache_manager = CacheManager()  # Cache for scraping (Issue #8)
         self.max_parallel = max_parallel
         self.timeout = timeout
         self.retries = retries
         self.delay = delay
         self.headers = {"User-Agent": user_agent}
 
-        logger.info("WebScraper initialized")
+        logger.info("WebScraper initialized with cache support")
+
 
     # ---------------------------------------------------
     # Fetch URL with retry logic
@@ -104,12 +107,22 @@ class WebScraper:
         }
 
     # ---------------------------------------------------
-    # Scrape single URL
+    # Scrape single URL (with caching)
     # ---------------------------------------------------
     def scrape_single(self, url):
+        # Check cache first (Issue #8)
+        cached_result = self.cache_manager.get(f"scrape:{url}")
+        if cached_result:
+            logger.info(f"Cache hit for {url}")
+            return cached_result
+
+        # Fetch if not cached
         html = self.fetch_url(url)
         if html:
-            return self.parse_content(html, url)
+            result = self.parse_content(html, url)
+            # Store in cache for future runs
+            self.cache_manager.set(f"scrape:{url}", result)
+            return result
         return None
 
     # ---------------------------------------------------

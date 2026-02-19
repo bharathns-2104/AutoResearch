@@ -280,7 +280,7 @@ class ConsolidationAgent:
             return "Re-evaluate"
 
     # ======================================================
-    # EXECUTIVE SUMMARY GENERATOR
+    # EXECUTIVE SUMMARY GENERATOR (FIXED: Issue #10)
     # ======================================================
 
     def _generate_summary(
@@ -300,9 +300,12 @@ class ConsolidationAgent:
                 summary += f"Financial runway is approximately {runway} months. "
 
         if market:
+            # Issue #10: growth_rate is a float, format it properly with %
             growth = market.get("growth_rate", 0)
             if growth:
-                summary += f"Market growth is estimated at {growth}% annually. "
+                # Ensure it's a number and format with 1 decimal place
+                growth_fmt = f"{float(growth):.1f}" if growth else "0"
+                summary += f"Market growth is estimated at {growth_fmt}% annually. "
 
         if competitive:
             intensity = competitive.get("competitive_intensity", "Medium")

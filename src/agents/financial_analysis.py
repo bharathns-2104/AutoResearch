@@ -62,36 +62,26 @@ class FinancialAnalysisAgent:
     # ===============================
 
     def _extract_costs(self, data: Dict[str, Any]) -> List[float]:
-        costs = []
-        for item in data.get("currencies", []):
-            context = item.get("context", "").lower()
-            if any(keyword in context for keyword in ["cost", "expense", "development", "salary"]):
-                costs.append(item["value"])
+        financial_metrics = data.get("financial_metrics", {})
+        costs = financial_metrics.get("startup_costs", [])
         return costs
 
     def _extract_revenue(self, data: Dict[str, Any]) -> float:
-        revenues = []
-        for item in data.get("currencies", []):
-            context = item.get("context", "").lower()
-            if "revenue" in context:
-                revenues.append(item["value"])
+        financial_metrics = data.get("financial_metrics", {})
+        revenues = financial_metrics.get("revenue_figures", [])
         return statistics.mean(revenues) if revenues else 0
 
     def _extract_growth(self, data: Dict[str, Any]) -> float:
-        growth_rates = []
-        for item in data.get("percentages", []):
-            context = item.get("context", "").lower()
-            if "growth" in context:
-                growth_rates.append(item["value"])
+        financial_metrics = data.get("financial_metrics", {})
+        growth_rates = financial_metrics.get("growth_rates", [])
         return statistics.mean(growth_rates) if growth_rates else 0
 
     def _extract_profit_margin(self, data: Dict[str, Any]) -> float:
-        margins = []
-        for item in data.get("percentages", []):
-            context = item.get("context", "").lower()
-            if "margin" in context or "profit" in context:
-                margins.append(item["value"])
-        return statistics.mean(margins) if margins else 0
+        # Profit margin is not directly extracted; use growth rate as proxy
+        financial_metrics = data.get("financial_metrics", {})
+        growth_rates = financial_metrics.get("growth_rates", [])
+        # Use average growth as proxy for profitability potential
+        return (statistics.mean(growth_rates) / 100 * 20) if growth_rates else 0  # 20% baseline
 
     # ===============================
     # SCORING LOGIC
