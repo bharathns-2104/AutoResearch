@@ -3,12 +3,6 @@ slot_schema.py
 
 Defines the formal slot schema for the AutoResearch
 slot-filling conversational intake system.
-
-This module is:
-- Extensible
-- Constraint-aware
-- Multi-currency ready
-- Backward compatible with existing pipeline
 """
 
 from dataclasses import dataclass, field
@@ -21,9 +15,6 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class Slot:
-    """
-    Represents a single slot in the dialog system.
-    """
     name: str
     required: bool
     data_type: str
@@ -59,7 +50,7 @@ SLOTS: Dict[str, Slot] = {
         constraints={
             "min_value": 1000,
             "max_value": 100_000_000,
-            "supported_currencies": ["USD"],  # Expand later
+            "supported_currencies": ["USD"],
             "default_currency": "USD"
         }
     ),
@@ -84,7 +75,7 @@ SLOTS: Dict[str, Slot] = {
 
     "team_size": Slot(
         name="team_size",
-        required=False,
+        required=False,                  # optional — user may skip
         data_type="integer",
         description="Number of team members",
         constraints={
@@ -100,30 +91,18 @@ SLOTS: Dict[str, Slot] = {
 # ==========================================================
 
 def get_required_slots() -> List[str]:
-    """
-    Returns list of required slot names.
-    """
     return [slot.name for slot in SLOTS.values() if slot.required]
 
 
 def get_optional_slots() -> List[str]:
-    """
-    Returns list of optional slot names.
-    """
     return [slot.name for slot in SLOTS.values() if not slot.required]
 
 
 def get_all_slots() -> List[str]:
-    """
-    Returns all slot names.
-    """
     return list(SLOTS.keys())
 
 
 def get_slot(name: str) -> Optional[Slot]:
-    """
-    Returns Slot object by name.
-    """
     return SLOTS.get(name)
 
 
@@ -132,50 +111,30 @@ def get_slot(name: str) -> Optional[Slot]:
 # ==========================================================
 
 def validate_numeric(value: float, slot: Slot) -> bool:
-    """
-    Validates numeric slot against min/max constraints.
-    """
     min_val = slot.constraints.get("min_value")
     max_val = slot.constraints.get("max_value")
-
     if min_val is not None and value < min_val:
         return False
     if max_val is not None and value > max_val:
         return False
-
     return True
 
 
 def validate_currency_object(value: Dict[str, Any], slot: Slot) -> bool:
-    """
-    Validates currency object:
-    {
-        "amount": float,
-        "currency": "USD"
-    }
-    """
     if not isinstance(value, dict):
         return False
-
     amount = value.get("amount")
     currency = value.get("currency")
-
     if amount is None or currency is None:
         return False
-
     if not isinstance(amount, (int, float)):
         return False
-
     if currency not in slot.constraints.get("supported_currencies", []):
         return False
-
     return validate_numeric(amount, slot)
 
 
 def validate_slot_value(slot_name: str, value: Any) -> bool:
-    """
-    General validation dispatcher.
-    """
     slot = get_slot(slot_name)
     if not slot:
         return False
@@ -191,12 +150,12 @@ def validate_slot_value(slot_name: str, value: Any) -> bool:
     if slot.data_type in ["text", "inferred_category"]:
         if value is None:
             return False
-
         if not isinstance(value, str):
             value = str(value)
-
         return len(value.strip()) > 0
-    return True
+
+    # FIX: unknown data_type should fail, not silently pass
+    return False
 
 
 # ==========================================================
@@ -205,21 +164,23 @@ def validate_slot_value(slot_name: str, value: Any) -> bool:
 
 def convert_to_pipeline_format(filled_slots: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Converts dialog slot data into original
-    Intake Agent structured JSON format.
+    Converts dialog slot data into the original Intake Agent JSON format.
+    Ensures backward compatibility with all downstream agents.
 
-    Ensures backward compatibility with:
-    - Search Engine
-    - Financial Agent
-    - Competitive Agent
-    - Market Agent
-    - Consolidation Agent
+    FIX: Always includes all fields with safe defaults so IntakeAgent
+    never hits a KeyError on optional slots like team_size.
     """
-
     output = filled_slots.copy()
 
-    # Convert currency_object -> numeric budget
+    # Convert currency_object → numeric budget value
     if "budget" in output and isinstance(output["budget"], dict):
-        output["budget"] = output["budget"].get("amount")
+        output["budget"] = output["budget"].get("amount", 0)
+
+    # Guarantee all fields exist with defaults — prevents KeyError in IntakeAgent
+    output.setdefault("industry", "Unknown")
+    output.setdefault("team_size", 1)          # FIX: optional slot default
+    output.setdefault("target_market", "General")
+    output.setdefault("timeline_months", 12)
+    output.setdefault("budget", 0)
 
     return output

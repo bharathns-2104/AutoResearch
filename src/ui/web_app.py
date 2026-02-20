@@ -11,7 +11,7 @@ import threading
 import streamlit as st
 
 from src.orchestration.workflow_controller import WorkflowController
-from src.orchestration.state_manager import SystemState
+from src.orchestration.state_manager import StateManager, SystemState
 from src.agents.dialog.dialog_engine import DialogEngine
 
 
@@ -35,7 +35,14 @@ if "dialog_engine" not in st.session_state:
     st.session_state.dialog_engine = DialogEngine()
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    # FIX: Show opening greeting immediately so user knows what to type
+    engine = st.session_state.dialog_engine
+    st.session_state.messages = [
+        {
+            "role": "assistant",
+            "content": engine.get_opening_message()
+        }
+    ]
 
 if "analysis_started" not in st.session_state:
     st.session_state.analysis_started = False
@@ -61,7 +68,7 @@ for msg in st.session_state.messages:
 # --------------------------------------------------
 
 if not st.session_state.analysis_started:
-    user_input = st.chat_input("Describe your business idea...")
+    user_input = st.chat_input("Type your answer...")
 
     if user_input:
 
@@ -189,8 +196,15 @@ if st.session_state.analysis_started and st.session_state.controller:
 
 if st.session_state.analysis_started:
     if st.button("Start New Analysis"):
+        # FIX: Reset the StateManager singleton so old state doesn't leak
+        StateManager.reset()
         st.session_state.dialog_engine = DialogEngine()
-        st.session_state.messages = []
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": st.session_state.dialog_engine.get_opening_message()
+            }
+        ]
         st.session_state.analysis_started = False
         st.session_state.workflow_thread = None
         st.session_state.controller = None

@@ -15,7 +15,7 @@ class IntakeAgent:
     # ----------------------------------
     def classify_industry(self, idea_text, industry_field):
 
-        if industry_field != "Unknown":
+        if industry_field and industry_field != "Unknown":
             return industry_field
 
         text = idea_text.lower()
@@ -28,6 +28,9 @@ class IntakeAgent:
             "finance": "FinTech",
             "education": "EdTech",
             "marketplace": "Platform",
+            "automotive": "Automotive",
+            "logistics": "Logistics",
+            "manufacturing": "Manufacturing",
         }
 
         for keyword, category in mapping.items():
@@ -64,17 +67,21 @@ class IntakeAgent:
 
         structured = {}
 
+        # Required fields — these will always exist from dialog engine
         structured["business_idea"] = raw_input["business_idea"]
-
-        structured["industry"] = self.classify_industry(
-            raw_input["business_idea"],
-            raw_input["industry"]
-        )
-
         structured["budget"] = raw_input["budget"]
         structured["timeline_months"] = raw_input["timeline_months"]
         structured["target_market"] = raw_input["target_market"]
-        structured["team_size"] = raw_input["team_size"]
+
+        # Industry: classify if missing or Unknown
+        structured["industry"] = self.classify_industry(
+            raw_input["business_idea"],
+            raw_input.get("industry", "Unknown")   # FIX: .get() with default
+        )
+
+        # Optional field — team_size may not be filled by dialog engine
+        # Use .get() with a sensible default instead of direct key access
+        structured["team_size"] = raw_input.get("team_size", 1)
 
         structured["search_queries"] = self.generate_search_queries(structured)
 
