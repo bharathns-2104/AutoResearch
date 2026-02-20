@@ -11,7 +11,8 @@ import threading
 import streamlit as st
 
 from src.orchestration.workflow_controller import WorkflowController
-from src.orchestration.state_manager import StateManager, SystemState
+from src.orchestration.state_manager import SystemState
+from src.agents.dialog.dialog_engine import DialogEngine
 
 
 # --------------------------------------------------
@@ -27,90 +28,102 @@ st.markdown("Generate financial, competitive, and market analysis reports automa
 
 
 # --------------------------------------------------
-# INPUT FORM
+# SESSION STATE INITIALIZATION
 # --------------------------------------------------
 
-with st.form("analysis_form"):
+if "dialog_engine" not in st.session_state:
+    st.session_state.dialog_engine = DialogEngine()
 
-    business_idea = st.text_area(
-        "Business Idea Description",
-        placeholder="Example: AI-powered invoice automation platform for small businesses"
-    )
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    industry = st.text_input("Industry")
+if "analysis_started" not in st.session_state:
+    st.session_state.analysis_started = False
 
-    budget = st.number_input(
-        "Budget (USD)",
-        min_value=1000,
-        step=1000
-    )
+if "workflow_thread" not in st.session_state:
+    st.session_state.workflow_thread = None
 
-    timeline = st.slider(
-        "Timeline (Months)",
-        min_value=1,
-        max_value=60,
-        value=12
-    )
-
-    target_market = st.text_input("Target Market")
-
-    team_size = st.number_input(
-        "Team Size",
-        min_value=1,
-        value=3
-    )
-
-    submitted = st.form_submit_button("Start Analysis")
+if "controller" not in st.session_state:
+    st.session_state.controller = None
 
 
 # --------------------------------------------------
-# WORKFLOW EXECUTION
+# DISPLAY CONVERSATION HISTORY
 # --------------------------------------------------
 
-if submitted:
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    if not business_idea or not industry or not target_market:
-        st.error("Please fill in all required fields.")
-        st.stop()
 
-    # -----------------------------
-    # STRUCTURED INPUT
-    # -----------------------------
-    raw_input = {
-        "business_idea": business_idea,
-        "industry": industry,
-        "budget": budget,
-        "timeline_months": timeline,
-        "target_market": target_market,
-        "team_size": team_size
-    }
+# --------------------------------------------------
+# CHAT INPUT
+# --------------------------------------------------
 
-    controller = WorkflowController()
+if not st.session_state.analysis_started:
+    user_input = st.chat_input("Describe your business idea...")
+
+    if user_input:
+
+        # Display user message
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_input
+        })
+
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # Process through dialog engine
+        result = st.session_state.dialog_engine.process_message(user_input)
+
+        # Display assistant response
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": result["response"]
+        })
+
+        with st.chat_message("assistant"):
+            st.markdown(result["response"])
+
+        # If intake complete → start workflow
+        if result["status"] == "complete":
+
+            st.session_state.analysis_started = True
+            structured_input = result["data"]
+
+            controller = WorkflowController()
+            st.session_state.controller = controller
+
+            # Inject structured input into workflow
+            controller.state_manager.add_data("test_input", structured_input)
+            controller.state_manager.update_state(SystemState.INITIALIZED)
+
+            # Run workflow in background thread
+            def run_workflow():
+                controller.run()
+
+            thread = threading.Thread(target=run_workflow)
+            thread.start()
+
+            st.session_state.workflow_thread = thread
+
+
+# --------------------------------------------------
+# WORKFLOW PROGRESS TRACKING
+# --------------------------------------------------
+
+if st.session_state.analysis_started and st.session_state.controller:
+
+    controller = st.session_state.controller
     state_manager = controller.state_manager
+    thread = st.session_state.workflow_thread
 
-    # Inject raw input into state for workflow to process
-    state_manager.add_data("test_input", raw_input)
-    state_manager.update_state(SystemState.INITIALIZED)
-
-    # -----------------------------
-    # UI ELEMENTS
-    # -----------------------------
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    # -----------------------------
-    # Run Workflow in Background
-    # -----------------------------
-    def run_workflow():
-        controller.run()
-
-    thread = threading.Thread(target=run_workflow)
-    thread.start()
-
-    # -----------------------------
-    # POLL STATE MANAGER
-    # -----------------------------
     while thread.is_alive():
+
         current_progress = state_manager.progress
         current_state = state_manager.current_state
 
@@ -119,9 +132,6 @@ if submitted:
 
         time.sleep(0.5)
 
-    # -----------------------------
-    # FINAL UPDATE
-    # -----------------------------
     progress_bar.progress(100)
 
     if state_manager.current_state == SystemState.ERROR:
@@ -130,9 +140,11 @@ if submitted:
         status_text.success("Pipeline Completed Successfully!")
         st.success("✅ Analysis Completed")
 
-    # -----------------------------
-    # OPTIONAL: SHOW EXECUTIVE SUMMARY
-    # -----------------------------
+
+    # --------------------------------------------------
+    # DISPLAY RESULTS
+    # --------------------------------------------------
+
     consolidated = state_manager.data.get("consolidated_output")
 
     if consolidated:
@@ -151,6 +163,7 @@ if submitted:
         report_paths = state_manager.data.get("report_paths")
 
         if report_paths:
+
             if report_paths.get("pdf"):
                 with open(report_paths["pdf"], "rb") as f:
                     st.download_button(
@@ -168,3 +181,17 @@ if submitted:
                         file_name="AutoResearch_Report.pptx",
                         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     )
+
+
+# --------------------------------------------------
+# RESET OPTION
+# --------------------------------------------------
+
+if st.session_state.analysis_started:
+    if st.button("Start New Analysis"):
+        st.session_state.dialog_engine = DialogEngine()
+        st.session_state.messages = []
+        st.session_state.analysis_started = False
+        st.session_state.workflow_thread = None
+        st.session_state.controller = None
+        st.rerun()
