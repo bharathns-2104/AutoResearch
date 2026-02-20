@@ -10,3 +10,7 @@ reports/
 *.pdf
 *.pptx
 reports/temp
+FIXES_SUMMARY.md
+test_fixes_lite.py
+test_fixes.py
+
