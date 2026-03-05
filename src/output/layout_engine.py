@@ -1,4 +1,4 @@
-from reportlab.platypus import SimpleDocTemplate
+from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
@@ -29,12 +29,42 @@ def _add_header_footer(canvas_obj, doc):
     canvas_obj.restoreState()
 
 
+class TOCDocTemplate(SimpleDocTemplate):
+    """
+    SimpleDocTemplate subclass that emits TOC entries and bookmarks
+    for Heading1 / Heading2 paragraphs. Any TableOfContents flowable
+    in the story will subscribe to these notifications.
+    """
+
+    def afterFlowable(self, flowable):
+        try:
+            from reportlab.platypus import Paragraph as RLParagraph
+        except ImportError:
+            return
+
+        if not isinstance(flowable, RLParagraph):
+            return
+
+        style_name = getattr(flowable.style, "name", "")
+        if style_name == "Heading1Style":
+            level = 0
+        elif style_name == "Heading2Style":
+            level = 1
+        else:
+            return
+
+        text = flowable.getPlainText()
+        key = f"{text}_{self.page}"
+        self.canv.bookmarkPage(key)
+        self.notify("TOCEntry", (level, text, self.page))
+
+
 def build_pdf(file_path, elements):
     """
     Builds the final PDF using provided elements.
     """
 
-    doc = SimpleDocTemplate(
+    doc = TOCDocTemplate(
         file_path,
         pagesize=A4,
         rightMargin=inch,

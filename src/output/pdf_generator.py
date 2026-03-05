@@ -18,6 +18,7 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, PageBreak,
     Table, TableStyle, Image, HRFlowable
 )
+from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.lib.pagesizes import A4
@@ -146,11 +147,29 @@ def _nlg_risks(risks):
 
 def _build_title_page(elements, mapped_data, styles):
     title_data = mapped_data.get("title_page", {})
-    elements.append(Spacer(1, 1.5 * inch))
-    elements.append(Paragraph(title_data.get("project_title", "AutoResearch Report"), styles["TitleStyle"]))
+    elements.append(Spacer(1, 1.0 * inch))
+
+    # Brand-colored banner
+    banner_data = [[""]]
+    banner = Table(
+        banner_data,
+        colWidths=[6 * inch],
+        rowHeights=[0.6 * inch],
+    )
+    banner.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1F3C88")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor("#0A2647")),
+    ]))
+    elements.append(banner)
+    elements.append(Spacer(1, 0.4 * inch))
+
+    title_para = Paragraph(
+        title_data.get("project_title", "AutoResearch Report"),
+        styles["TitleStyle"],
+    )
+    elements.append(title_para)
     elements.append(Spacer(1, 0.3 * inch))
-    elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1F3C88")))
-    elements.append(Spacer(1, 0.2 * inch))
+
     elements.append(Paragraph(
         f"Generated: {title_data.get('generated_at', datetime.now().strftime('%Y-%m-%d %H:%M'))}",
         styles["ItalicStyle"]
@@ -159,11 +178,60 @@ def _build_title_page(elements, mapped_data, styles):
 
 
 def _build_executive_summary(elements, mapped_data, styles):
-    elements.append(Paragraph("Executive Summary", styles["Heading1Style"]))
+    heading = Paragraph("Executive Summary", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.1 * inch))
+
     summary = mapped_data.get("executive_summary", {}).get("summary_text", "No summary available.")
-    elements.append(Paragraph(summary, styles["BodyStyle"]))
+    score_data = mapped_data.get("score_overview", {})
+    domain_data = mapped_data.get("domain_scores", {})
+    decision = mapped_data.get("decision", {}).get("final_decision", "—")
+    confidence = mapped_data.get("data_confidence", {})
+
+    metrics_lines = [
+        f"<b>Overall score:</b> {score_data.get('overall_score', 0):.0%} ({score_data.get('rating', '—')})",
+        f"<b>Financial:</b> {domain_data.get('financial_score', 0):.0%}",
+        f"<b>Market:</b> {domain_data.get('market_score', 0):.0%}",
+        f"<b>Competitive:</b> {domain_data.get('competitive_score', 0):.0%}",
+        f"<b>Decision:</b> {decision}",
+        f"<b>Data confidence:</b> {confidence.get('overall', 'Medium')}",
+    ]
+    metrics_html = "<br/>".join(metrics_lines)
+
+    metrics_cell = Paragraph(metrics_html, styles["BodyStyle"])
+    summary_cell = Paragraph(summary, styles["BodyStyle"])
+
+    table = Table(
+        [[metrics_cell, summary_cell]],
+        colWidths=[2.5 * inch, 3.3 * inch],
+    )
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#F4F8FF")),
+        ("BOX", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(table)
+    elements.append(PageBreak())
+
+
+def _build_table_of_contents(elements, styles):
+    heading = Paragraph("Contents", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
+    elements.append(Spacer(1, 0.15 * inch))
+
+    toc = TableOfContents()
+    toc.levelStyles = [
+        styles["TOCLevel1Style"],
+        styles["TOCLevel2Style"],
+    ]
+    elements.append(toc)
     elements.append(PageBreak())
 
 
@@ -171,7 +239,9 @@ def _build_score_overview(elements, mapped_data, styles, chart_builder):
     score_data = mapped_data.get("score_overview", {})
     domain_data = mapped_data.get("domain_scores", {})
 
-    elements.append(Paragraph("Viability Score Overview", styles["Heading1Style"]))
+    heading = Paragraph("Viability Score Overview", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.15 * inch))
 
@@ -200,7 +270,16 @@ def _build_score_overview(elements, mapped_data, styles, chart_builder):
         ("BOTTOMPADDING",(0, 0), (-1, -1), 6),
     ]))
     elements.append(tbl)
-    elements.append(Spacer(1, 0.3 * inch))
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Data confidence caveat
+    confidence = mapped_data.get("data_confidence", {})
+    overall_conf = confidence.get("overall", "Medium")
+    conf_text = f"Overall data confidence: <b>{overall_conf}</b>."
+    if overall_conf in ("Low", "Medium"):
+        conf_text += " Interpret this assessment with caution as some domains have limited data coverage."
+    elements.append(Paragraph(conf_text, styles["BodyStyle"]))
+    elements.append(Spacer(1, 0.2 * inch))
 
     # Domain score bar chart
     chart_path = chart_builder.build_domain_score_chart(mapped_data)
@@ -213,8 +292,11 @@ def _build_score_overview(elements, mapped_data, styles, chart_builder):
 def _build_financial_section(elements, mapped_data, styles, chart_builder):
     domain_data  = mapped_data.get("domain_scores", {})
     score_data   = mapped_data.get("score_overview", {})
+    fin_details  = mapped_data.get("financial_details", {})
 
-    elements.append(Paragraph("Financial Analysis", styles["Heading1Style"]))
+    heading = Paragraph("Financial Analysis", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.15 * inch))
 
@@ -225,11 +307,22 @@ def _build_financial_section(elements, mapped_data, styles, chart_builder):
 
     # Metrics table
     fscore = domain_data.get("financial_score", 0)
+    runway = fin_details.get("runway_months", 0)
+    monthly_burn = fin_details.get("monthly_burn", 0)
+    est_revenue = fin_details.get("estimated_revenue", 0)
+    fin_growth = fin_details.get("growth_rate", 0)
+    margin = fin_details.get("profit_margin", 0)
+
     fin_table_data = [
-        ["Metric",                  "Value"],
+        ["Metric",                    "Value"],
         ["Financial Viability Score", f"{fscore:.0%}"],
         ["Score Interpretation",
          "Strong" if fscore >= 0.7 else ("Moderate" if fscore >= 0.5 else "Weak")],
+        ["Runway (months)",           f"{runway:.1f}"],
+        ["Monthly burn (USD)",        f"{monthly_burn:,.0f}"],
+        ["Estimated revenue (USD)",   f"{est_revenue:,.0f}"],
+        ["Growth rate (%)",           f"{fin_growth:.1f}"],
+        ["Estimated profit margin (%)", f"{margin:.1f}"],
     ]
     tbl = Table(fin_table_data, colWidths=[3.5 * inch, 2.5 * inch])
     tbl.setStyle(TableStyle([
@@ -255,8 +348,11 @@ def _build_financial_section(elements, mapped_data, styles, chart_builder):
 
 def _build_market_section(elements, mapped_data, styles):
     domain_data = mapped_data.get("domain_scores", {})
+    mkt_details = mapped_data.get("market_details", {})
 
-    elements.append(Paragraph("Market Analysis", styles["Heading1Style"]))
+    heading = Paragraph("Market Analysis", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.15 * inch))
 
@@ -266,11 +362,23 @@ def _build_market_section(elements, mapped_data, styles):
     elements.append(Spacer(1, 0.2 * inch))
 
     mscore = domain_data.get("market_score", 0)
+    tam = mkt_details.get("tam", 0)
+    sam = mkt_details.get("sam", 0)
+    som = mkt_details.get("som", 0)
+    currency = mkt_details.get("tam_currency", "USD")
+    growth = mkt_details.get("growth_rate", 0)
+    sent_label = mkt_details.get("sentiment_label", "Neutral")
+    sent_score = mkt_details.get("sentiment_score", 0)
     mkt_table_data = [
-        ["Metric",               "Value"],
-        ["Market Score",         f"{mscore:.0%}"],
+        ["Metric",                 "Value"],
+        ["Market Score",           f"{mscore:.0%}"],
         ["Opportunity Level",
          "High" if mscore >= 0.7 else ("Medium" if mscore >= 0.5 else "Low")],
+        ["TAM",                    f"{tam:,.0f} {currency}"],
+        ["SAM",                    f"{sam:,.0f} {currency}"],
+        ["SOM",                    f"{som:,.0f} {currency}"],
+        ["Growth rate (%)",        f"{growth:.1f}"],
+        ["Sentiment",              f"{sent_label} ({sent_score:+.2f})"],
     ]
     tbl = Table(mkt_table_data, colWidths=[3.5 * inch, 2.5 * inch])
     tbl.setStyle(TableStyle([
@@ -284,13 +392,25 @@ def _build_market_section(elements, mapped_data, styles):
         ("BOTTOMPADDING",(0, 0), (-1, -1), 6),
     ]))
     elements.append(tbl)
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Key insights
+    insights = mkt_details.get("key_insights", [])
+    if insights:
+        elements.append(Paragraph("Key market insights:", styles["Heading2Style"]))
+        for ins in insights:
+            elements.append(Paragraph(f"&#8226; {ins}", styles["BulletStyle"]))
+
     elements.append(PageBreak())
 
 
 def _build_competitive_section(elements, mapped_data, styles):
     domain_data = mapped_data.get("domain_scores", {})
+    comp_details = mapped_data.get("competitive_details", {})
 
-    elements.append(Paragraph("Competitive Analysis", styles["Heading1Style"]))
+    heading = Paragraph("Competitive Analysis", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.15 * inch))
 
@@ -299,11 +419,16 @@ def _build_competitive_section(elements, mapped_data, styles):
     elements.append(Spacer(1, 0.2 * inch))
 
     cscore = domain_data.get("competitive_score", 0)
+    competitors_found = comp_details.get("competitors_found", 0)
+    top_competitors = comp_details.get("top_competitors", [])
+    intensity = comp_details.get("competitive_intensity", "Unknown")
     comp_table_data = [
-        ["Metric",                 "Value"],
-        ["Competitive Score",      f"{cscore:.0%}"],
+        ["Metric",                    "Value"],
+        ["Competitive Score",         f"{cscore:.0%}"],
         ["Market Saturation",
          "Low" if cscore >= 0.7 else ("Medium" if cscore >= 0.5 else "High")],
+        ["Competitors found",         str(competitors_found)],
+        ["Intensity classification",  intensity],
     ]
     tbl = Table(comp_table_data, colWidths=[3.5 * inch, 2.5 * inch])
     tbl.setStyle(TableStyle([
@@ -317,6 +442,48 @@ def _build_competitive_section(elements, mapped_data, styles):
         ("BOTTOMPADDING",(0, 0), (-1, -1), 6),
     ]))
     elements.append(tbl)
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Top competitors
+    if top_competitors:
+        elements.append(Paragraph("Top competitors:", styles["Heading2Style"]))
+        for name in top_competitors:
+            elements.append(Paragraph(f"&#8226; {name}", styles["BulletStyle"]))
+        elements.append(Spacer(1, 0.15 * inch))
+
+    # SWOT matrix
+    swot = comp_details.get("swot", {})
+    swot_table_data = [
+        ["Strengths", "Weaknesses"],
+        [
+            "<br/>".join(swot.get("strengths", []) or ["—"]),
+            "<br/>".join(swot.get("weaknesses", []) or ["—"]),
+        ],
+        ["Opportunities", "Threats"],
+        [
+            "<br/>".join(swot.get("opportunities", []) or ["—"]),
+            "<br/>".join(swot.get("threats", []) or ["—"]),
+        ],
+    ]
+    swot_tbl = Table(swot_table_data, colWidths=[3 * inch, 3 * inch])
+    swot_tbl.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F8FF")),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#F4F8FF")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    elements.append(swot_tbl)
+    elements.append(Spacer(1, 0.2 * inch))
+
+    # Market gaps
+    gaps = comp_details.get("market_gaps", [])
+    if gaps:
+        elements.append(Paragraph("Observed market gaps:", styles["Heading2Style"]))
+        for gap in gaps:
+            elements.append(Paragraph(f"&#8226; {gap}", styles["BulletStyle"]))
+
     elements.append(PageBreak())
 
 
@@ -324,7 +491,9 @@ def _build_risk_section(elements, mapped_data, styles):
     risk_data = mapped_data.get("risk_analysis", {})
     risks = risk_data.get("risks", [])
 
-    elements.append(Paragraph("Risk Analysis", styles["Heading1Style"]))
+    heading = Paragraph("Risk Analysis", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.15 * inch))
 
@@ -371,12 +540,48 @@ def _build_recommendations_decision(elements, mapped_data, styles):
     rec_data  = mapped_data.get("recommendations", {})
     dec_data  = mapped_data.get("decision", {})
 
-    elements.append(Paragraph("Recommendations &amp; Decision", styles["Heading1Style"]))
+    heading = Paragraph("Recommendations &amp; Decision", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     elements.append(Spacer(1, 0.15 * inch))
 
-    for rec in rec_data.get("recommendations", []):
-        elements.append(Paragraph(f"&#8226; {rec}", styles["BulletStyle"]))
+    # Recommendations as priority-coloured table
+    raw_recs = rec_data.get("recommendations", [])
+    if raw_recs:
+        rec_rows = [["Action", "Priority"]]
+        for rec in raw_recs:
+            text = str(rec)
+            priority = "Medium"
+            lowered = text.lower()
+            if "immediate" in lowered or "aggressively" in lowered:
+                priority = "High"
+            elif "caution" in lowered or "phased" in lowered:
+                priority = "Medium"
+            elif "monitor" in lowered:
+                priority = "Low"
+            rec_rows.append([text, priority])
+
+        rec_tbl = Table(rec_rows, colWidths=[4.2 * inch, 1.8 * inch])
+        style_cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]
+        for i in range(1, len(rec_rows)):
+            prio = rec_rows[i][1]
+            if prio == "High":
+                bg = colors.HexColor("#FFDADA")
+            elif prio == "Medium":
+                bg = colors.HexColor("#FFF4CC")
+            else:
+                bg = colors.HexColor("#DAFFD4")
+            style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
+
+        rec_tbl.setStyle(TableStyle(style_cmds))
+        elements.append(rec_tbl)
 
     elements.append(Spacer(1, 0.3 * inch))
     elements.append(Paragraph("Final Decision", styles["Heading2Style"]))
@@ -399,6 +604,52 @@ def _build_recommendations_decision(elements, mapped_data, styles):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
     ]))
     elements.append(dec_tbl)
+
+    # Decision rationale
+    score_data = mapped_data.get("score_overview", {})
+    confidence = mapped_data.get("data_confidence", {})
+    risk_data = mapped_data.get("risk_analysis", {})
+    risks = risk_data.get("risks", [])
+
+    rationale_parts = [
+        f"The decision is based on an overall viability score of {score_data.get('overall_score', 0):.0%}",
+        f"with overall data confidence rated as {confidence.get('overall', 'Medium')}.",
+    ]
+    if risks:
+        rationale_parts.append(f"{len(risks)} consolidated risk item(s) were identified across financial, market, and competitive domains.")
+
+    rationale_text = " ".join(rationale_parts)
+    elements.append(Spacer(1, 0.2 * inch))
+    elements.append(Paragraph(rationale_text, styles["BodyStyle"]))
+
+
+def _build_data_sources_section(elements, mapped_data, styles):
+    sources = mapped_data.get("sources", [])
+    if not sources:
+        return
+
+    heading = Paragraph("Appendix: Data Sources", styles["Heading1Style"])
+    heading.outlineLevel = 0
+    elements.append(heading)
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
+    elements.append(Spacer(1, 0.15 * inch))
+
+    table_data = [["Title", "URL"]]
+    for src in sources:
+        title = src.get("title", "") or src.get("url", "")
+        url = src.get("url", "")
+        table_data.append([title, url])
+
+    tbl = Table(table_data, colWidths=[3 * inch, 3 * inch])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F3C88")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.lightgrey),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    elements.append(tbl)
 
 
 # ==============================================================
@@ -445,26 +696,32 @@ class PDFGenerator:
             # Section 0: Title page
             _build_title_page(elements, mapped_data, styles)
 
-            # Section 1: Executive summary
+            # Section 1: Table of contents
+            _build_table_of_contents(elements, styles)
+
+            # Section 2: Executive summary
             _build_executive_summary(elements, mapped_data, styles)
 
-            # Section 2: Score overview (with domain chart)
+            # Section 3: Score overview (with domain chart)
             _build_score_overview(elements, mapped_data, styles, self.chart_builder)
 
-            # Section 3: Financial Analysis + NLG
+            # Section 4: Financial Analysis + NLG
             _build_financial_section(elements, mapped_data, styles, self.chart_builder)
 
-            # Section 4: Market Analysis + NLG
+            # Section 5: Market Analysis + NLG
             _build_market_section(elements, mapped_data, styles)
 
-            # Section 5: Competitive Analysis + NLG
+            # Section 6: Competitive Analysis + NLG
             _build_competitive_section(elements, mapped_data, styles)
 
-            # Section 6: Risk Analysis
+            # Section 7: Risk Analysis
             _build_risk_section(elements, mapped_data, styles)
 
-            # Section 7: Recommendations + Decision
+            # Section 8: Recommendations + Decision
             _build_recommendations_decision(elements, mapped_data, styles)
+
+            # Section 9: Appendix – Data Sources
+            _build_data_sources_section(elements, mapped_data, styles)
 
             build_pdf(file_path, elements)
             logger.info(f"PDF generated: {file_path}")

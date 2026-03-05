@@ -358,6 +358,13 @@ class WorkflowController:
                 consolidated = agent.run(analysis_results)
                 self.cache_manager.set_consolidation_cache(structured_input, consolidated)
 
+            # Attach rich analysis details and sources for reporting.
+            extracted_data = self.state_manager.data.get("extracted_data", {})
+            consolidated["financial_details"] = analysis_results.get("financial", {})
+            consolidated["market_details"] = analysis_results.get("market", {})
+            consolidated["competitive_details"] = analysis_results.get("competitive", {})
+            consolidated["sources"] = extracted_data.get("sources", [])
+
             # Check if consolidation is based on partial data
             is_partial = (
                 self.state_manager.data.get("analysis_partial", False) or

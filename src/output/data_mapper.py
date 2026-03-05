@@ -32,6 +32,10 @@ class ReportDataMapper:
             "recommendations": self._map_recommendations(consolidated_data),
             "decision": self._map_decision(consolidated_data),
             "data_confidence": self._map_data_confidence(consolidated_data),
+            "financial_details": self._map_financial_details(consolidated_data),
+            "market_details": self._map_market_details(consolidated_data),
+            "competitive_details": self._map_competitive_details(consolidated_data),
+            "sources": self._map_sources(consolidated_data),
         }
 
     # ======================================================
@@ -139,3 +143,75 @@ class ReportDataMapper:
             "competitive": confidence.get("competitive", "Medium"),
             "overall": confidence.get("overall", "Medium"),
         }
+
+    # ======================================================
+    # ANALYSIS DETAIL SECTIONS
+    # ======================================================
+
+    def _map_financial_details(self, data):
+        details = data.get("financial_details", {}) or {}
+        metrics = details.get("metrics", {}) or {}
+
+        return {
+            "runway_months": details.get("runway_months", 0),
+            "viability_score": details.get("viability_score", 0.0),
+            "monthly_burn": metrics.get("monthly_burn", 0),
+            "estimated_revenue": metrics.get("estimated_revenue", 0),
+            "growth_rate": metrics.get("growth_rate", 0),
+            "profit_margin": metrics.get("profit_margin", 0),
+        }
+
+    def _map_market_details(self, data):
+        details = data.get("market_details", {}) or {}
+        tam_sam_som = details.get("tam_sam_som", {}) or {}
+        market_size = details.get("market_size", {}) or {}
+        sentiment = details.get("sentiment", {}) or {}
+
+        return {
+            "tam": tam_sam_som.get("tam", 0),
+            "sam": tam_sam_som.get("sam", 0),
+            "som": tam_sam_som.get("som", 0),
+            "tam_currency": market_size.get("currency", "USD"),
+            "growth_rate": details.get("growth_rate", 0),
+            "sentiment_label": sentiment.get("label", "Neutral"),
+            "sentiment_score": sentiment.get("score", 0),
+            "key_insights": details.get("key_insights", []),
+        }
+
+    def _map_competitive_details(self, data):
+        details = data.get("competitive_details", {}) or {}
+        swot = details.get("swot_analysis", {}) or {}
+
+        return {
+            "competitors_found": details.get("competitors_found", 0),
+            "top_competitors": details.get("top_competitors", []),
+            "competitive_intensity": details.get("competitive_intensity", "Unknown"),
+            "swot": {
+                "strengths": swot.get("strengths", []),
+                "weaknesses": swot.get("weaknesses", []),
+                "opportunities": swot.get("opportunities", []),
+                "threats": swot.get("threats", []),
+            },
+            "market_gaps": details.get("market_gaps", []),
+        }
+
+    def _map_sources(self, data):
+        """
+        Normalise scraped sources (URLs + titles) into a simple list
+        for the appendix section.
+        """
+        raw_sources = data.get("sources", []) or []
+        normalised = []
+
+        for src in raw_sources:
+            if not isinstance(src, dict):
+                continue
+            url = src.get("url")
+            if not url:
+                continue
+            normalised.append({
+                "title": src.get("title", "") or url,
+                "url": url,
+            })
+
+        return normalised

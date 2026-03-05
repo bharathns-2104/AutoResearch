@@ -114,4 +114,26 @@ def get_styles():
         backColor=colors.HexColor("#F4F4F4"),
     )
 
+    # ==============================
+    # TOC Level Styles
+    # ==============================
+    styles["TOCLevel1Style"] = ParagraphStyle(
+        name="TOCLevel1Style",
+        parent=base_styles["Normal"],
+        fontSize=11,
+        leading=14,
+        leftIndent=12,
+        firstLineIndent=-12,
+        spaceBefore=2,
+        spaceAfter=2,
+    )
+
+    styles["TOCLevel2Style"] = ParagraphStyle(
+        name="TOCLevel2Style",
+        parent=styles["TOCLevel1Style"],
+        leftIndent=24,
+        firstLineIndent=-12,
+        fontSize=10,
+    )
+
     return styles
