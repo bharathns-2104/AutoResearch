@@ -109,11 +109,14 @@ class CacheManager:
     # CONSOLIDATION CACHE
     # =====================================================
 
-    def _get_consolidation_cache_path(self):
-        return self.cache_dir / "consolidated_output.json"
+    def _get_consolidation_cache_path(self, structured_input):
+        # Use a hash of the structured input as the cache key
+        input_str = json.dumps(structured_input, sort_keys=True)
+        input_hash = hashlib.md5(input_str.encode()).hexdigest()
+        return self.cache_dir / f"consolidated_output_{input_hash}.json"
 
-    def get_consolidation_cache(self):
-        path = self._get_consolidation_cache_path()
+    def get_consolidation_cache(self, structured_input):
+        path = self._get_consolidation_cache_path(structured_input)
 
         if not path.exists():
             return None
@@ -133,8 +136,8 @@ class CacheManager:
             logger.warning(f"Consolidation cache read failed: {str(e)}")
             return None
 
-    def set_consolidation_cache(self, content):
-        path = self._get_consolidation_cache_path()
+    def set_consolidation_cache(self, structured_input, content):
+        path = self._get_consolidation_cache_path(structured_input)
 
         try:
             with open(path, "w", encoding="utf-8") as f:

@@ -348,7 +348,8 @@ class WorkflowController:
             return
 
         try:
-            cached = self.cache_manager.get_consolidation_cache()
+            structured_input = self.state_manager.data.get("structured_input", {})
+            cached = self.cache_manager.get_consolidation_cache(structured_input)
 
             if cached:
                 self.logger.info("Using cached consolidation results")
@@ -357,7 +358,7 @@ class WorkflowController:
                 from ..agents.consolidation_agent import ConsolidationAgent
                 agent = ConsolidationAgent()
                 consolidated = agent.run(analysis_results)
-                self.cache_manager.set_consolidation_cache(consolidated)
+                self.cache_manager.set_consolidation_cache(structured_input, consolidated)
 
             # Check if consolidation is based on partial data
             is_partial = (
