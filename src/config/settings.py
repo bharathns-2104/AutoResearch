@@ -62,3 +62,14 @@ SCRAPING_SETTINGS = {
     "success_rate_threshold": 0.30  # 30% of URLs must succeed
 }
 
+# ======================================================
+# MARKET SIZING SETTINGS
+# ======================================================
+# Controls how TAM is translated into SAM and SOM in MarketAnalysisAgent.
+# Defaults reflect a typical B2B SaaS-style funnel but can be tuned
+# per deployment without touching code.
+MARKET_SETTINGS = {
+    "sam_ratio": 0.30,   # SAM = sam_ratio * TAM
+    "som_ratio": 0.03,   # SOM = som_ratio * SAM
+}
+

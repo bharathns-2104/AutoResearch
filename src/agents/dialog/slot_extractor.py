@@ -250,7 +250,15 @@ def extract_budget(text: str, targeted: bool = False):
 # ==========================================================
 
 def extract_timeline(text: str):
-    match = re.search(r"(\d+)\s?(months|month|years|year)", text.lower())
+    text_lower = text.lower()
+
+    # First handle common non-numeric phrases.
+    if "half a year" in text_lower:
+        return 6
+    if re.search(r"\b(a|one)\s+year\b", text_lower):
+        return 12
+
+    match = re.search(r"(\d+)\s?(months|month|years|year)", text_lower)
     if not match:
         return None
     value = int(match.group(1))

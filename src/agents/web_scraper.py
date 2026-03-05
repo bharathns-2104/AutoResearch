@@ -178,7 +178,10 @@ class WebScraper:
     # Scrape single URL (with caching)
     # ---------------------------------------------------
     def scrape_single(self, url):
-        # Check cache first (Issue #8)
+        # Check cache first (Issue #8).
+        # Note: CacheManager applies an internal MD5 hash to this key;
+        # the "scrape:" prefix is part of the logical namespace and
+        # intentionally included in the hashed key.
         cached_result = self.cache_manager.get(f"scrape:{url}")
         if cached_result:
             logger.info(f"Cache hit for {url}")

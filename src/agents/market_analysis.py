@@ -1,6 +1,8 @@
 from typing import Dict, Any, List
 import statistics
 
+from src.config.settings import MARKET_SETTINGS
+
 
 class MarketAnalysisAgent:
 
@@ -86,15 +88,17 @@ class MarketAnalysisAgent:
     def _calculate_tam_sam_som(self, market_data):
 
         tam = market_data.get("global", 0)
+        sam_ratio = MARKET_SETTINGS.get("sam_ratio", 0.30)
+        som_ratio = MARKET_SETTINGS.get("som_ratio", 0.03)
 
-        sam = tam * 0.3  # Assume 30% reachable region
-        som = sam * 0.03  # Assume 3% realistic startup share
+        sam = tam * sam_ratio
+        som = sam * som_ratio
 
         return {
             "tam": tam,
             "sam": sam,
             "som": som,
-            "assumptions": "SAM = 30% of TAM, SOM = 3% of SAM"
+            "assumptions": f"SAM = {sam_ratio:.0%} of TAM, SOM = {som_ratio:.0%} of SAM",
         }
 
     # ===============================
@@ -177,8 +181,9 @@ class MarketAnalysisAgent:
         elif sentiment_score < -0.2:
             score -= 0.1  # Penalise clearly negative sentiment
 
-        # Penalise large but stagnant/negative markets
-        if tam_value > 1_000_000_000 and growth < 1 and sentiment_score <= 0:
+        # Penalise large but stagnant markets only when sentiment is not already negative,
+        # to avoid double-penalising the same scenario.
+        if tam_value > 1_000_000_000 and growth < 1 and sentiment_score >= 0:
             score -= 0.1
 
         return max(0.0, min(score, 1.0))

@@ -200,11 +200,11 @@ class ExtractionEngine:
             "growth_rates": []
         }
 
-        # Dataset-level meta stats
+        # Dataset-level meta stats (page-level signal coverage)
         total_quality_score = 0.0
-        pages_with_financial_signals = 0
-        pages_with_market_signals = 0
-        pages_with_growth_signals = 0
+        pages_with_any_financial_signals = 0
+        pages_with_any_market_signals = 0
+        pages_with_any_growth_signals = 0
         sources = []
 
         for page in scraped_content:
@@ -242,11 +242,11 @@ class ExtractionEngine:
 
             # Per-page signal flags (for meta stats)
             if any(financials[key] for key in ["startup_costs", "revenue_figures", "funding_amounts"]):
-                pages_with_financial_signals += 1
+                pages_with_any_financial_signals += 1
             if financials["market_sizes"]:
-                pages_with_market_signals += 1
+                pages_with_any_market_signals += 1
             if financials["growth_rates"]:
-                pages_with_growth_signals += 1
+                pages_with_any_growth_signals += 1
 
             # ---------------------------
             # KEYWORDS
@@ -306,9 +306,9 @@ class ExtractionEngine:
             "meta": {
                 "num_pages": num_pages,
                 "avg_page_quality": round(avg_quality, 3),
-                "pages_with_financial_signals": pages_with_financial_signals,
-                "pages_with_market_signals": pages_with_market_signals,
-                "pages_with_growth_signals": pages_with_growth_signals,
+                "pages_with_any_financial_signals": pages_with_any_financial_signals,
+                "pages_with_any_market_signals": pages_with_any_market_signals,
+                "pages_with_any_growth_signals": pages_with_any_growth_signals,
             },
             "sources": deduped_sources,
         }

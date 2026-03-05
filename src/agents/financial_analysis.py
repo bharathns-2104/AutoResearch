@@ -132,9 +132,9 @@ class FinancialAnalysisAgent:
     def _calculate_viability(self, runway, growth, margin, funding: List[float], budget: float) -> float:
         score = 0.0
 
-        # Runway scoring (up to 0.35)
+        # Runway scoring (up to 0.30)
         if runway > 18:
-            score += 0.35
+            score += 0.30
         elif runway > self.config.healthy_runway_threshold:
             score += 0.2
 

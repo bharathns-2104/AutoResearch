@@ -91,6 +91,11 @@ class CompetitiveAnalysisAgent:
     # ===============================
     def _cluster_entities(self, competitors: List[str]) -> List[str]:
 
+        # For very large sets, fall back to a simpler deduplication strategy
+        # to avoid O(n²) similarity checks.
+        if len(competitors) > 200:
+            return sorted(list(set(competitors)))
+
         clustered = []
 
         for comp in competitors:

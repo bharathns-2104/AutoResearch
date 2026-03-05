@@ -53,9 +53,7 @@ class WorkflowController:
                     self.handle_extraction()
 
                 elif current_state == SystemState.EXTRACTING:
-                    self.handle_analysis()
-
-                elif current_state == SystemState.ANALYZING:
+                    # Extraction has completed; proceed to analysis once.
                     self.handle_analysis()
 
                 elif current_state == SystemState.CONSOLIDATING:

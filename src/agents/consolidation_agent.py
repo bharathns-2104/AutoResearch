@@ -315,9 +315,10 @@ class ConsolidationAgent:
         if market:
             # Issue #10: growth_rate is a float, format it properly with %
             growth = market.get("growth_rate", 0)
-            if growth:
+            # growth can legitimately be 0%, so only skip when None
+            if growth is not None:
                 # Ensure it's a number and format with 1 decimal place
-                growth_fmt = f"{float(growth):.1f}" if growth else "0"
+                growth_fmt = f"{float(growth):.1f}"
                 summary += f"Market growth is estimated at {growth_fmt}% annually. "
 
         if competitive:
