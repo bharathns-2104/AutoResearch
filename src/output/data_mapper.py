@@ -30,7 +30,8 @@ class ReportDataMapper:
             "domain_scores": self._map_domain_scores(consolidated_data),
             "risk_analysis": self._map_risk_analysis(consolidated_data),
             "recommendations": self._map_recommendations(consolidated_data),
-            "decision": self._map_decision(consolidated_data)
+            "decision": self._map_decision(consolidated_data),
+            "data_confidence": self._map_data_confidence(consolidated_data),
         }
 
     # ======================================================
@@ -122,4 +123,19 @@ class ReportDataMapper:
     def _map_decision(self, data):
         return {
             "final_decision": data.get("decision", "")
+        }
+
+    # ======================================================
+    # DATA CONFIDENCE (PER DOMAIN + OVERALL)
+    # ======================================================
+
+    def _map_data_confidence(self, data):
+        metadata = data.get("metadata", {})
+        confidence = metadata.get("data_confidence", {})
+
+        return {
+            "financial": confidence.get("financial", "Medium"),
+            "market": confidence.get("market", "Medium"),
+            "competitive": confidence.get("competitive", "Medium"),
+            "overall": confidence.get("overall", "Medium"),
         }

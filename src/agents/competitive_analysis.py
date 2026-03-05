@@ -31,13 +31,28 @@ class CompetitiveAnalysisAgent:
 
         summary = self._generate_summary(intensity)
 
+        # Data confidence heuristic for competitive landscape
+        competitor_count = len(clustered_competitors)
+        distinct_features = len(feature_distribution)
+
+        meta = extracted_data.get("meta", {})
+        num_pages = meta.get("num_pages", 0)
+
+        if competitor_count >= 10 and distinct_features >= 5 and num_pages >= 5:
+            data_confidence = "High"
+        elif competitor_count >= 3 and distinct_features >= 2:
+            data_confidence = "Medium"
+        else:
+            data_confidence = "Low"
+
         return {
             "competitors_found": len(clustered_competitors),
             "top_competitors": clustered_competitors[:10],
             "competitive_intensity": intensity,
             "swot_analysis": swot,
             "market_gaps": market_gaps,
-            "summary": summary
+            "summary": summary,
+            "data_confidence": data_confidence,
         }
 
     # ===============================
@@ -154,21 +169,53 @@ class CompetitiveAnalysisAgent:
         opportunities = []
         threats = []
 
+        competitor_count = len(competitors)
+        sample_names = ", ".join(competitors[:3])
+
         # Strengths
-        if len(competitors) >= 5:
-            strengths.append("Market validated by multiple competitors.")
+        if competitor_count >= 5:
+            label = f"{competitor_count} identified competitors"
+            if sample_names:
+                strengths.append(
+                    f"Market validated by {label} (e.g. {sample_names})."
+                )
+            else:
+                strengths.append("Market validated by multiple named competitors.")
+        elif 1 <= competitor_count < 5:
+            strengths.append(
+                "Early competitive activity observed, indicating a live problem space."
+            )
 
         # Weaknesses
         if intensity == "High":
-            weaknesses.append("Highly saturated market.")
+            msg = "Highly saturated market with many established players."
+            if sample_names:
+                msg += f" Notable incumbents include {sample_names}."
+            weaknesses.append(msg)
 
-        # Opportunities
+        # Opportunities: under-served features
+        rare_features = []
+        for feature, count in feature_distribution.items():
+            if competitor_count > 0 and count / competitor_count < 0.3:
+                rare_features.append(feature)
+
+        if rare_features:
+            top_rare = ", ".join(rare_features[:5])
+            opportunities.append(
+                f"Feature gaps identified: relatively few competitors mention {top_rare}."
+            )
+
         if "ai automation" not in feature_distribution:
-            opportunities.append("AI features underutilized in competitors.")
+            opportunities.append("AI-driven automation appears underrepresented among current competitors.")
 
         # Threats
         if intensity == "High":
-            threats.append("Strong established competitors with market dominance.")
+            threats.append("Strong established competitors create high barriers to entry.")
+
+        if intensity == "Low" and competitor_count == 0:
+            opportunities.append(
+                "No direct competitors identified, suggesting potential first-mover advantage."
+            )
 
         if not opportunities:
             opportunities.append("Explore niche positioning strategies.")

@@ -20,6 +20,29 @@ class MarketAnalysisAgent:
 
         summary = self._generate_summary(opportunity_score)
 
+        # Data confidence heuristic: market size + growth + sentiment signals
+        financial_metrics = extracted_data.get("financial_metrics", {})
+        market_sizes = financial_metrics.get("market_sizes", [])
+        growth_rates = financial_metrics.get("growth_rates", [])
+
+        signal_count = 0
+        if market_sizes:
+            signal_count += 1
+        if growth_rates:
+            signal_count += 1
+        if sentiment["positive_signals"] or sentiment["negative_signals"]:
+            signal_count += 1
+
+        meta = extracted_data.get("meta", {})
+        num_pages = meta.get("num_pages", 0)
+
+        if signal_count == 3 and num_pages >= 5:
+            data_confidence = "High"
+        elif signal_count >= 2:
+            data_confidence = "Medium"
+        else:
+            data_confidence = "Low"
+
         return {
             "market_size": tam,
             "tam_sam_som": tam_sam_som,
@@ -27,7 +50,8 @@ class MarketAnalysisAgent:
             "sentiment": sentiment,
             "opportunity_score": round(opportunity_score, 2),
             "key_insights": self._generate_insights(tam, growth, sentiment),
-            "summary": summary
+            "summary": summary,
+            "data_confidence": data_confidence,
         }
 
     # ===============================
@@ -127,25 +151,37 @@ class MarketAnalysisAgent:
 
         score = 0.0
 
-        # Market size scoring
+        # Market size scoring (up to 0.4)
         if tam_value > 10_000_000_000:
             score += 0.4
         elif tam_value > 1_000_000_000:
             score += 0.3
-
-        # Growth scoring
-        if growth > 10:
-            score += 0.3
-        elif growth > 5:
+        elif tam_value > 100_000_000:
             score += 0.2
 
-        # Sentiment scoring
+        # Growth scoring (up to 0.3)
+        if growth > 15:
+            score += 0.3
+        elif growth > 10:
+            score += 0.25
+        elif growth > 5:
+            score += 0.15
+        elif growth > 0:
+            score += 0.05
+
+        # Sentiment scoring (up to 0.3)
         if sentiment_score > 0.2:
             score += 0.3
         elif sentiment_score > 0:
             score += 0.2
+        elif sentiment_score < -0.2:
+            score -= 0.1  # Penalise clearly negative sentiment
 
-        return min(score, 1.0)
+        # Penalise large but stagnant/negative markets
+        if tam_value > 1_000_000_000 and growth < 1 and sentiment_score <= 0:
+            score -= 0.1
+
+        return max(0.0, min(score, 1.0))
 
     # ===============================
     # INSIGHTS

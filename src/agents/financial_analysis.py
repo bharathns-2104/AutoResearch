@@ -24,13 +24,14 @@ class FinancialAnalysisAgent:
         revenue = self._extract_revenue(extracted_data)
         growth = self._extract_growth(extracted_data)
         margin = self._extract_profit_margin(extracted_data)
+        funding = self._extract_funding(extracted_data)
 
         total_cost = sum(costs)
         monthly_burn = total_cost / 12 if total_cost else 0
         runway = budget / monthly_burn if monthly_burn else 0
 
         viability_score = self._calculate_viability(
-            runway, growth, margin
+            runway, growth, margin, funding, budget
         )
 
         risks = self._generate_risks(runway, growth)
@@ -41,6 +42,27 @@ class FinancialAnalysisAgent:
         summary = self._generate_summary(
             runway, viability_score
         )
+
+        # Data confidence heuristic based on available signals and dataset size
+        financial_metrics = extracted_data.get("financial_metrics", {})
+        signal_lists = [
+            financial_metrics.get("startup_costs", []),
+            financial_metrics.get("revenue_figures", []),
+            financial_metrics.get("funding_amounts", []),
+            financial_metrics.get("market_sizes", []),
+            financial_metrics.get("growth_rates", []),
+        ]
+        signal_count = sum(1 for lst in signal_lists if lst)
+
+        meta = extracted_data.get("meta", {})
+        num_pages = meta.get("num_pages", 0)
+
+        if signal_count >= 3 and num_pages >= 5:
+            data_confidence = "High"
+        elif signal_count >= 2:
+            data_confidence = "Medium"
+        else:
+            data_confidence = "Low"
 
         return {
             "metrics": {
@@ -54,7 +76,8 @@ class FinancialAnalysisAgent:
             "viability_score": round(viability_score, 2),
             "risks": risks,
             "recommendations": recommendations,
-            "summary": summary
+            "summary": summary,
+            "data_confidence": data_confidence,
         }
 
     # ===============================
@@ -65,6 +88,10 @@ class FinancialAnalysisAgent:
         financial_metrics = data.get("financial_metrics", {})
         costs = financial_metrics.get("startup_costs", [])
         return costs
+
+    def _extract_funding(self, data: Dict[str, Any]) -> List[float]:
+        financial_metrics = data.get("financial_metrics", {})
+        return financial_metrics.get("funding_amounts", [])
 
     def _extract_revenue(self, data: Dict[str, Any]) -> float:
         financial_metrics = data.get("financial_metrics", {})
@@ -77,32 +104,66 @@ class FinancialAnalysisAgent:
         return statistics.mean(growth_rates) if growth_rates else 0
 
     def _extract_profit_margin(self, data: Dict[str, Any]) -> float:
-        # Profit margin is not directly extracted; use growth rate as proxy
+        """
+        Estimate profit margin using revenue vs. total costs when possible.
+        Fallback: use growth rate as a proxy when revenue is missing.
+        """
         financial_metrics = data.get("financial_metrics", {})
+
+        revenues = financial_metrics.get("revenue_figures", [])
+        costs = financial_metrics.get("startup_costs", [])
+
+        if revenues and costs:
+            avg_revenue = statistics.mean(revenues)
+            total_cost = sum(costs)
+            # Assume startup_costs roughly represent annualised costs
+            if avg_revenue > 0:
+                margin = (avg_revenue - total_cost) / avg_revenue * 100
+                return margin
+
+        # Fallback to growth-based proxy
         growth_rates = financial_metrics.get("growth_rates", [])
-        # Use average growth as proxy for profitability potential
         return (statistics.mean(growth_rates) / 100 * 20) if growth_rates else 0  # 20% baseline
 
     # ===============================
     # SCORING LOGIC
     # ===============================
 
-    def _calculate_viability(self, runway, growth, margin) -> float:
+    def _calculate_viability(self, runway, growth, margin, funding: List[float], budget: float) -> float:
         score = 0.0
 
-        # Runway scoring
+        # Runway scoring (up to 0.35)
         if runway > 18:
-            score += 0.3
+            score += 0.35
         elif runway > self.config.healthy_runway_threshold:
             score += 0.2
 
-        # Growth scoring
+        # Growth scoring (up to 0.25)
         if growth > self.config.strong_growth_threshold:
-            score += 0.3
+            score += 0.25
+        elif growth > 5:
+            score += 0.15
 
-        # Margin scoring
+        # Margin scoring (up to 0.2)
         if margin > self.config.strong_margin_threshold:
             score += 0.2
+        elif margin > 5:
+            score += 0.1
+
+        # Funding vs. budget alignment (up to ±0.2 total)
+        if funding and budget > 0:
+            median_funding = statistics.median(funding)
+            # Avoid degenerate case
+            if median_funding > 0:
+                ratio = budget / median_funding
+                # Ideal: budget in a reasonable band around typical funding
+                if 0.5 <= ratio <= 2.0:
+                    score += 0.2
+                elif 0.25 <= ratio < 0.5 or 2.0 < ratio <= 4.0:
+                    score += 0.05
+                else:
+                    # Very misaligned vs market norms → slight penalty
+                    score -= 0.05
 
         return min(score, 1.0)
 

@@ -200,10 +200,24 @@ class ExtractionEngine:
             "growth_rates": []
         }
 
+        # Dataset-level meta stats
+        total_quality_score = 0.0
+        pages_with_financial_signals = 0
+        pages_with_market_signals = 0
+        pages_with_growth_signals = 0
+        sources = []
+
         for page in scraped_content:
             text = page.get("text", "")
             if not text:
                 continue
+
+            # Track basic source + quality metadata
+            url = page.get("url")
+            title = page.get("title")
+            if url:
+                sources.append({"url": url, "title": title or ""})
+            total_quality_score += float(page.get("quality_score", 0.0))
 
             # ---------------------------
             # ENTITY EXTRACTION
@@ -225,6 +239,14 @@ class ExtractionEngine:
 
             for key in structured_financials:
                 structured_financials[key].extend(financials[key])
+
+            # Per-page signal flags (for meta stats)
+            if any(financials[key] for key in ["startup_costs", "revenue_figures", "funding_amounts"]):
+                pages_with_financial_signals += 1
+            if financials["market_sizes"]:
+                pages_with_market_signals += 1
+            if financials["growth_rates"]:
+                pages_with_growth_signals += 1
 
             # ---------------------------
             # KEYWORDS
@@ -257,6 +279,19 @@ class ExtractionEngine:
                 f"Consider lowering threshold for small datasets."
             )
 
+        # Build dataset meta information
+        avg_quality = total_quality_score / num_pages if num_pages else 0.0
+
+        # Deduplicate sources by URL while preserving order
+        seen_urls = set()
+        deduped_sources = []
+        for src in sources:
+            url = src.get("url")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            deduped_sources.append(src)
+
         structured_output = {
             "entities": {
                 "organizations": top_organizations,
@@ -267,7 +302,15 @@ class ExtractionEngine:
                 key: list(set(values))
                 for key, values in structured_financials.items()
             },
-            "keywords": top_keywords
+            "keywords": top_keywords,
+            "meta": {
+                "num_pages": num_pages,
+                "avg_page_quality": round(avg_quality, 3),
+                "pages_with_financial_signals": pages_with_financial_signals,
+                "pages_with_market_signals": pages_with_market_signals,
+                "pages_with_growth_signals": pages_with_growth_signals,
+            },
+            "sources": deduped_sources,
         }
 
         logger.info("Extraction completed successfully")

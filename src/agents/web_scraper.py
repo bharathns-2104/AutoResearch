@@ -1,11 +1,13 @@
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 from bs4 import BeautifulSoup
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
 
+from src.orchestration.cache_manager import CacheManager
 from src.orchestration.logger import setup_logger
 from src.orchestration.state_manager import StateManager, SystemState
-from src.orchestration.cache_manager import CacheManager
 
 logger = setup_logger()
 
@@ -63,6 +65,67 @@ class WebScraper:
             tag.decompose()
 
         return soup
+    # ---------------------------------------------------
+    # Internal helper: basic page quality scoring
+    # ---------------------------------------------------
+    def _score_page_quality(self, text: str) -> dict:
+        """
+        Compute simple quality metrics for a scraped page.
+
+        These metrics are intentionally lightweight and are later
+        used by ExtractionEngine to derive dataset-level meta
+        (e.g. data confidence).
+        """
+        if not text:
+            return {
+                "word_count": 0,
+                "num_money_tokens": 0,
+                "num_percent_tokens": 0,
+                "num_business_keywords": 0,
+                "quality_score": 0.0,
+            }
+
+        word_count = len(text.split())
+
+        money_pattern = r"\$\s?\d+(?:[\.,]\d+)?\s?[kmbKMB]?"
+        percent_pattern = r"\b\d+(?:\.\d+)?%"
+
+        num_money = len(re.findall(money_pattern, text))
+        num_percent = len(re.findall(percent_pattern, text))
+
+        business_terms = [
+            "funding",
+            "seed round",
+            "series a",
+            "series b",
+            "market size",
+            "tam",
+            "sam",
+            "som",
+            "revenue",
+            "valuation",
+            "cagr",
+            "growth rate",
+            "burn rate",
+        ]
+        lower_text = text.lower()
+        num_business_keywords = sum(1 for term in business_terms if term in lower_text)
+
+        # Heuristic quality score: more words + financial/market signals
+        score = 0.0
+        if word_count > 0:
+            score += min(word_count / 2000.0, 0.4)  # cap contribution from length
+        score += min(num_money * 0.05, 0.3)
+        score += min(num_percent * 0.03, 0.15)
+        score += min(num_business_keywords * 0.05, 0.15)
+
+        return {
+            "word_count": word_count,
+            "num_money_tokens": num_money,
+            "num_percent_tokens": num_percent,
+            "num_business_keywords": num_business_keywords,
+            "quality_score": round(score, 3),
+        }
 
     # ---------------------------------------------------
     # Parse structured content
@@ -77,6 +140,9 @@ class WebScraper:
         # Extract main text
         paragraphs = [p.get_text(strip=True) for p in soup.find_all("p")]
         text = "\n".join(paragraphs)
+
+        # Quality metrics
+        quality_meta = self._score_page_quality(text)
 
         # Extract headings
         headings = []
@@ -98,13 +164,15 @@ class WebScraper:
             if rows:
                 tables.append(rows)
 
-        return {
+        result = {
             "url": url,
             "title": title,
             "text": text[:100000],  # limit huge pages
             "headings": headings,
             "tables": tables
         }
+        result.update(quality_meta)
+        return result
 
     # ---------------------------------------------------
     # Scrape single URL (with caching)
@@ -134,7 +202,15 @@ class WebScraper:
         self.state.update_state(SystemState.SCRAPING)
         self.state.update_progress(50)
 
-        urls = list({item["url"] for item in search_results if item.get("url")})
+        # Deduplicate URLs while preserving order
+        url_seen = set()
+        urls = []
+        for item in search_results:
+            url = item.get("url")
+            if not url or url in url_seen:
+                continue
+            url_seen.add(url)
+            urls.append(url)
 
         scraped_data = []
 
@@ -145,6 +221,9 @@ class WebScraper:
                 result = future.result()
                 if result:
                     scraped_data.append(result)
+
+        # Sort pages by quality score so downstream components see the richest pages first
+        scraped_data.sort(key=lambda x: x.get("quality_score", 0.0), reverse=True)
 
         logger.info(f"Successfully scraped {len(scraped_data)} pages")
 

@@ -90,20 +90,31 @@ class ConsolidationAgent:
             risks
         )
 
-        overall_rating = self._classify_overall_rating(risk_adjusted_score)
+        # -------------------------------------------------
+        # Apply confidence adjustment (small penalty for low-confidence data)
+        # -------------------------------------------------
+        confidence_info, confidence_penalty = self._apply_confidence_adjustment(
+            risk_adjusted_score,
+            financial,
+            market,
+            competitive,
+        )
+        confidence_adjusted_score = max(0.0, min(1.0, risk_adjusted_score - confidence_penalty))
+
+        overall_rating = self._classify_overall_rating(confidence_adjusted_score)
 
         # -------------------------------------------------
         # Recommendations + Decision should use adjusted score
         # -------------------------------------------------
         recommendations = self._generate_recommendations(
-            risk_adjusted_score,
+            confidence_adjusted_score,
             risks
         )
 
-        decision = self._make_decision(risk_adjusted_score)
+        decision = self._make_decision(confidence_adjusted_score)
 
         summary = self._generate_summary(
-            risk_adjusted_score,
+            confidence_adjusted_score,
             overall_rating,
             financial,
             market,
@@ -114,7 +125,7 @@ class ConsolidationAgent:
             financial_score=round(financial_score, 2),
             market_score=round(market_score, 2),
             competitive_score=round(competitive_score, 2),
-            overall_viability_score=round(risk_adjusted_score, 2),  # FIXED
+            overall_viability_score=round(confidence_adjusted_score, 2),  # risk + confidence adjusted
             overall_rating=overall_rating,
             aggregated_risks=risks,
             final_recommendations=recommendations,
@@ -127,7 +138,9 @@ class ConsolidationAgent:
                     "market": 0.3,
                     "competitive": 0.3
                 },
-                "risk_penalty_applied": round(total_penalty, 3)
+                "risk_penalty_applied": round(total_penalty, 3),
+                "confidence_penalty_applied": round(confidence_penalty, 3),
+                "data_confidence": confidence_info,
             }
         )
 
@@ -337,3 +350,48 @@ class ConsolidationAgent:
         adjusted_score = max(0.0, min(1.0, adjusted_score))
 
         return adjusted_score, penalty
+
+    # ======================================================
+    # CONFIDENCE-ADJUSTED SCORING
+    # ======================================================
+
+    def _apply_confidence_adjustment(self, base_score, financial, market, competitive):
+        """
+        Derive per-domain and overall data confidence labels from
+        upstream agents and apply a small penalty when overall
+        confidence is low.
+        """
+
+        def _label_from_agent(agent_data, default="Medium"):
+            if not isinstance(agent_data, dict):
+                return default
+            return agent_data.get("data_confidence", default)
+
+        financial_conf = _label_from_agent(financial)
+        market_conf = _label_from_agent(market)
+        competitive_conf = _label_from_agent(competitive)
+
+        labels = [financial_conf, market_conf, competitive_conf]
+
+        # Overall confidence: pessimistic aggregation
+        if "Low" in labels:
+            overall_conf = "Low"
+        elif all(label == "High" for label in labels):
+            overall_conf = "High"
+        else:
+            overall_conf = "Medium"
+
+        # Penalty only when confidence is Low (be conservative)
+        if overall_conf == "Low":
+            penalty = 0.05
+        else:
+            penalty = 0.0
+
+        confidence_info = {
+            "financial": financial_conf,
+            "market": market_conf,
+            "competitive": competitive_conf,
+            "overall": overall_conf,
+        }
+
+        return confidence_info, penalty
