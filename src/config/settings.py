@@ -1,3 +1,45 @@
+import os
+
+# ======================================================
+# LLM SETTINGS  (Phase 1 — Intelligence Layer)
+# ======================================================
+# Provider is selected via LLM_PROVIDER env var or the dict below.
+# Supported providers (via LiteLLM): ollama, openai, anthropic, groq, …
+#
+# Local / zero-cost default:
+#   Install Ollama → https://ollama.ai
+#   Pull a model  → ollama pull llama3
+#   Leave LLM_API_KEY empty for local inference.
+#
+# Cloud example (OpenAI):
+#   LLM_PROVIDER = "openai"
+#   LLM_MODEL    = "gpt-4o-mini"
+#   LLM_API_KEY  = "<your key>"
+LLM_SETTINGS = {
+    # Full LiteLLM model string: "<provider>/<model-name>"
+    "model":           os.getenv("LLM_MODEL",    "ollama/llama3"),
+    # API base URL — required for Ollama; leave None for cloud providers
+    "api_base":        os.getenv("LLM_API_BASE", "http://localhost:11434"),
+    # API key — empty string is treated as "none" for local models
+    "api_key":         os.getenv("LLM_API_KEY",  ""),
+    # Per-call timeout in seconds
+    "timeout_seconds": int(os.getenv("LLM_TIMEOUT",      "60")),
+    # Retry attempts on transient failures
+    "max_retries":     int(os.getenv("LLM_MAX_RETRIES",   "2")),
+    # Whether the extraction engine should use LLM (True) or regex fallback (False)
+    "use_llm_extraction": os.getenv("LLM_EXTRACTION", "true").lower() == "true",
+    # Whether the self-correction loop is enabled
+    "enable_self_correction": os.getenv("LLM_SELF_CORRECTION", "true").lower() == "true",
+    # Maximum self-correction iterations before giving up
+    "self_correction_max_iterations": int(os.getenv("LLM_SELF_CORRECTION_ITERS", "2")),
+    # Minimum confidence score to skip self-correction (0.0 – 1.0)
+    "self_correction_confidence_threshold": float(
+        os.getenv("LLM_CONFIDENCE_THRESHOLD", "0.6")
+    ),
+    # Whether smart routing is enabled
+    "enable_smart_routing": os.getenv("LLM_SMART_ROUTING", "true").lower() == "true",
+}
+
 # ======================================================
 # REPORT GENERATION SETTINGS
 # ======================================================
@@ -21,55 +63,35 @@ REPORT_SETTINGS = {
 # ======================================================
 # COMPETITIVE ANALYSIS THRESHOLDS
 # ======================================================
-# These thresholds control competitive intensity classification
-# based on number of competitors found during analysis.
-# Rationale: More competitors = more saturated market
 COMPETITIVE_INTENSITY_THRESHOLDS = {
     "low_max": 5,        # < 5 competitors = Low intensity
     "medium_max": 15,    # 5-15 competitors = Medium intensity
     # > 15 = High intensity
-    # Industry basis: Typical niche markets (5 or fewer), moderate
-    # competition (5-15), and saturated markets (15+)
 }
 
 # ======================================================
 # EXTRACTION & KEYWORD FILTERING
 # ======================================================
 EXTRACTION_SETTINGS = {
-    # Minimum keyword frequency threshold. Dynamically adjusted
-    # based on number of pages scraped (issue #11):
-    # - Small scrape sets (3-10 pages): threshold = 1
-    # - Medium (10-30 pages): threshold = 2
-    # - Large (30+ pages): threshold = 3
-    # This prevents discarding important keywords from small datasets.
-    "keyword_frequency_threshold_small": 1,      # for 3-10 pages
-    "keyword_frequency_threshold_medium": 2,     # for 10-30 pages
-    "keyword_frequency_threshold_large": 3,      # for 30+ pages
-    "max_keywords_output": 20                    # Top N keywords to keep
+    "keyword_frequency_threshold_small": 1,
+    "keyword_frequency_threshold_medium": 2,
+    "keyword_frequency_threshold_large": 3,
+    "max_keywords_output": 20
 }
 
 # ======================================================
 # SCRAPING SETTINGS
 # ======================================================
 SCRAPING_SETTINGS = {
-    # Minimum pages to scrape successfully before proceeding (issue #12)
-    # If fewer than this exist, log warning but allow partial report
     "min_pages_threshold": 3,
-    # Max pages to attempt (practical limit)
     "max_pages_threshold": 100,
-    # Graceful degradation: If scraping succeeds for at least this
-    # percentage of URLs, continue with partial data instead of failing
-    "success_rate_threshold": 0.30  # 30% of URLs must succeed
+    "success_rate_threshold": 0.30
 }
 
 # ======================================================
 # MARKET SIZING SETTINGS
 # ======================================================
-# Controls how TAM is translated into SAM and SOM in MarketAnalysisAgent.
-# Defaults reflect a typical B2B SaaS-style funnel but can be tuned
-# per deployment without touching code.
 MARKET_SETTINGS = {
-    "sam_ratio": 0.30,   # SAM = sam_ratio * TAM
-    "som_ratio": 0.03,   # SOM = som_ratio * SAM
+    "sam_ratio": 0.30,
+    "som_ratio": 0.03,
 }
-
