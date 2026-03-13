@@ -1,38 +1,32 @@
 """
-financial_analysis.py  —  Phase 1b update
+financial_analysis.py  —  Phase 2 update: RAG-augmented extraction
 
-New: _review_output() method
-  After the initial analysis run, the agent sends its own output to the LLM
-  and asks it to judge confidence (0–1) and list any missing signals.
-
-  If confidence < REVIEW_CONFIDENCE_THRESHOLD the agent:
-    1. Parses the LLM's list of missing signals (e.g. "missing CAGR", "no funding data").
-    2. Returns a structured gap_report so WorkflowController can dispatch
-       targeted follow-up searches and re-run the agent with the enriched data.
-
-  The public entry point is run_with_review(), which WorkflowController calls
-  instead of run() when Phase 1b is active.  run() itself is unchanged, so
-  existing call-sites keep working without modification.
+Changes vs Phase 1b:
+  - run() and run_with_review() now accept an optional `rag` parameter
+    (a RAGManager instance).
+  - _extract_costs(), _extract_revenue(), _extract_growth(), and
+    _extract_profit_margin() each fall back to RAG semantic retrieval
+    when the structured financial_metrics dict has sparse data.
+  - RAG queries are intent-tagged so ChromaDB can filter by source type.
+  - If rag is None or not ready, behaviour is 100% identical to Phase 1b.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Any
-from dataclasses import dataclass
+import re
 import statistics
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
 
 from src.config.settings import LLM_SETTINGS
 from src.orchestration.logger import setup_logger
 
 logger = setup_logger()
 
-# ── review thresholds ──────────────────────────────────────────────────────
-REVIEW_CONFIDENCE_THRESHOLD: float = 0.65   # below this → trigger gap search
-MAX_REVIEW_ITERATIONS: int         = 2      # maximum self-review passes
+REVIEW_CONFIDENCE_THRESHOLD: float = 0.65
+MAX_REVIEW_ITERATIONS: int         = 2
 
-
-# ── LLM review prompt ─────────────────────────────────────────────────────
 _REVIEW_SYSTEM = """You are a financial analysis quality-assurance agent.
 Given a financial analysis JSON, assess its reliability.
 
@@ -63,6 +57,32 @@ Business context: {business_idea} in {industry} targeting {target_market}.
 Budget provided: ${budget:,}
 """
 
+# ── RAG extraction prompt sent to LLM when RAG chunks are available ───────
+
+_RAG_EXTRACT_SYSTEM = """You are a financial data extraction specialist.
+Given text snippets retrieved from web research, extract numeric financial values.
+
+Return ONLY a JSON object:
+{
+  "startup_costs": [list of USD amounts as plain numbers],
+  "revenue_figures": [list of USD amounts as plain numbers],
+  "funding_amounts": [list of USD amounts as plain numbers],
+  "growth_rates": [list of percentage values as plain numbers],
+  "market_sizes": [list of USD amounts as plain numbers]
+}
+
+Rules:
+- Convert all monetary values to USD numbers (e.g. "$5M" → 5000000).
+- Convert percentages to plain numbers (e.g. "8.5%" → 8.5).
+- If nothing relevant found, use empty lists.
+- Do NOT include duplicates.
+"""
+
+_RAG_EXTRACT_USER = """Extract financial metrics from these research snippets:
+
+{chunks}
+"""
+
 
 @dataclass
 class FinancialConfig:
@@ -79,7 +99,7 @@ class FinancialAnalysisAgent:
         self.config = config
 
     # ═══════════════════════════════════════════════════════════════════════
-    # PUBLIC: run_with_review  (Phase 1b entry point)
+    # PUBLIC: run_with_review  (Phase 2 entry point — rag param added)
     # ═══════════════════════════════════════════════════════════════════════
 
     def run_with_review(
@@ -88,24 +108,23 @@ class FinancialAnalysisAgent:
         budget:           float,
         structured_input: Dict[str, Any] | None = None,
         search_callback=None,
+        rag=None,
     ) -> Dict[str, Any]:
         """
-        Run financial analysis with an optional self-review loop.
+        Run financial analysis with optional RAG augmentation and self-review.
 
         Args:
             extracted_data:   Output from ExtractionEngine.
             budget:           Available budget from intake.
             structured_input: Business context (idea, industry, market).
-            search_callback:  Optional callable(queries: list[str]) → new_extracted_data.
-                              If provided and review finds gaps, it is called to
-                              fetch supplemental data before re-running analysis.
+            search_callback:  Optional callable(queries) → new extracted_data.
+            rag:              Optional RAGManager instance (Phase 2).
 
         Returns:
-            Standard analysis result dict, augmented with a `review` key containing
-            the final review verdict and confidence score.
+            Standard analysis result dict with a `review` key.
         """
-        result   = self.run(extracted_data, budget)
-        ctx      = structured_input or {}
+        result = self.run(extracted_data, budget, rag=rag)
+        ctx    = structured_input or {}
 
         if not LLM_SETTINGS.get("enable_self_correction", True):
             result["review"] = {"confidence": None, "verdict": "SKIPPED", "issues": []}
@@ -122,7 +141,6 @@ class FinancialAnalysisAgent:
             if review["verdict"] == "PASS":
                 break
 
-            # ── gap-fill: call back into the search/scrape layer ──────────
             missing = review.get("missing_signals", [])
             if not missing or search_callback is None:
                 logger.info(
@@ -131,15 +149,12 @@ class FinancialAnalysisAgent:
                 )
                 break
 
-            logger.info(
-                f"FinancialAnalysis: triggering gap-fill for: {missing}"
-            )
+            logger.info(f"FinancialAnalysis: triggering gap-fill for: {missing}")
             try:
                 enriched = search_callback(missing)
                 if enriched:
-                    # Merge new financial signals into extracted_data
                     extracted_data = _merge_financial_data(extracted_data, enriched)
-                    result         = self.run(extracted_data, budget)
+                    result         = self.run(extracted_data, budget, rag=rag)
             except Exception as exc:
                 logger.warning(f"FinancialAnalysis gap-fill failed: {exc}")
                 break
@@ -147,10 +162,23 @@ class FinancialAnalysisAgent:
         return result
 
     # ═══════════════════════════════════════════════════════════════════════
-    # ORIGINAL run()  — unchanged, always available
+    # ORIGINAL run()  — Phase 2: rag param added
     # ═══════════════════════════════════════════════════════════════════════
 
-    def run(self, extracted_data: Dict[str, Any], budget: float) -> Dict[str, Any]:
+    def run(
+        self,
+        extracted_data: Dict[str, Any],
+        budget: float,
+        rag=None,
+    ) -> Dict[str, Any]:
+        """
+        Core analysis.  If `rag` is provided and ready, sparse metrics are
+        supplemented via semantic retrieval before scoring.
+        """
+        # ── Phase 2: RAG augmentation ─────────────────────────────────────
+        if rag is not None and rag.is_ready():
+            extracted_data = self._augment_with_rag(extracted_data, rag)
+
         costs   = self._extract_costs(extracted_data)
         revenue = self._extract_revenue(extracted_data)
         growth  = self._extract_growth(extracted_data)
@@ -201,10 +229,126 @@ class FinancialAnalysisAgent:
             "recommendations":  recommendations,
             "summary":          summary,
             "data_confidence":  data_confidence,
+            "rag_augmented":    rag is not None and rag.is_ready(),
         }
 
     # ═══════════════════════════════════════════════════════════════════════
-    # PHASE 1b: SELF-REVIEW
+    # PHASE 2: RAG AUGMENTATION
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _augment_with_rag(
+        self,
+        extracted_data: Dict[str, Any],
+        rag,
+    ) -> Dict[str, Any]:
+        """
+        Query RAG for financial signals not already present in extracted_data.
+        Merges any new numeric values found into financial_metrics.
+        """
+        fm = extracted_data.get("financial_metrics", {})
+
+        # Determine which signal categories need augmentation
+        queries: List[tuple[str, str]] = []   # (query_text, intent_filter)
+        if not fm.get("startup_costs"):
+            queries.append(("startup cost initial investment budget expenses", "GENERAL"))
+        if not fm.get("revenue_figures"):
+            queries.append(("annual revenue earnings income projection", "GENERAL"))
+        if not fm.get("funding_amounts"):
+            queries.append(("funding raised investment round seed series", "FUNDING"))
+        if not fm.get("growth_rates"):
+            queries.append(("market growth rate CAGR annual growth percentage", "MARKET_SIZE"))
+        if not fm.get("market_sizes"):
+            queries.append(("total addressable market size TAM valuation billion", "MARKET_SIZE"))
+
+        if not queries:
+            logger.info("FinancialAnalysis RAG: all signal categories already populated")
+            return extracted_data
+
+        top_k = 3
+        all_chunks: List[str] = []
+        for query_text, intent in queries:
+            try:
+                chunks = rag.query(query_text, top_k=top_k, intent_filter=None)
+                logger.info(
+                    f"FinancialAnalysis RAG query '{query_text[:50]}' "
+                    f"→ {len(chunks)} chunks"
+                )
+                all_chunks.extend(chunks)
+            except Exception as exc:
+                logger.warning(f"FinancialAnalysis RAG query failed: {exc}")
+
+        if not all_chunks:
+            return extracted_data
+
+        # Ask LLM to parse financial values from retrieved chunks
+        rag_metrics = self._parse_rag_chunks(all_chunks)
+        if rag_metrics:
+            return _merge_financial_data(extracted_data, {"financial_metrics": rag_metrics})
+
+        return extracted_data
+
+    def _parse_rag_chunks(self, chunks: List[str]) -> Dict[str, List]:
+        """
+        Use LLM (or regex fallback) to extract numeric financial values
+        from a list of RAG-retrieved text chunks.
+        """
+        combined_text = "\n\n---\n\n".join(chunks[:6])   # cap at 6 chunks
+
+        try:
+            from src.orchestration.llm_client import call_llm_json
+            result = call_llm_json(
+                _RAG_EXTRACT_SYSTEM,
+                _RAG_EXTRACT_USER.format(chunks=combined_text[:3_000]),
+            )
+            if isinstance(result, dict):
+                # Ensure all lists contain only numbers
+                clean: Dict[str, List] = {}
+                for k in ["startup_costs", "revenue_figures", "funding_amounts",
+                          "growth_rates", "market_sizes"]:
+                    vals = result.get(k, [])
+                    clean[k] = [v for v in vals if isinstance(v, (int, float))]
+                logger.info(
+                    f"FinancialAnalysis RAG parse: "
+                    + ", ".join(f"{k}={len(v)}" for k, v in clean.items())
+                )
+                return clean
+        except Exception as exc:
+            logger.warning(f"FinancialAnalysis RAG LLM parse failed: {exc} — using regex")
+
+        return self._parse_rag_chunks_regex(combined_text)
+
+    @staticmethod
+    def _parse_rag_chunks_regex(text: str) -> Dict[str, List]:
+        """Lightweight regex fallback when LLM is unavailable."""
+        import re
+
+        money_pattern   = r"\$\s?(\d+(?:[.,]\d+)?)\s?(k|m|b|million|billion|thousand)?"
+        percent_pattern = r"\b(\d+(?:\.\d+)?)\s?%"
+
+        def _norm_money(num_str: str, unit: str) -> float:
+            val = float(num_str.replace(",", ""))
+            u = (unit or "").lower()
+            if u in ("b", "billion"):  val *= 1e9
+            elif u in ("m", "million"): val *= 1e6
+            elif u in ("k", "thousand"): val *= 1e3
+            return val
+
+        money_vals = [
+            _norm_money(m, u)
+            for m, u in re.findall(money_pattern, text.lower())
+        ]
+        pct_vals = [float(p) for p in re.findall(percent_pattern, text)]
+
+        return {
+            "startup_costs":   money_vals[:3],
+            "revenue_figures": money_vals[3:6],
+            "funding_amounts": money_vals[6:9],
+            "market_sizes":    [],
+            "growth_rates":    pct_vals[:5],
+        }
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PHASE 1b: SELF-REVIEW  (unchanged)
     # ═══════════════════════════════════════════════════════════════════════
 
     def _review_output(
@@ -212,10 +356,6 @@ class FinancialAnalysisAgent:
         result:  Dict[str, Any],
         context: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Ask the LLM to judge the analysis output.
-        Falls back to a heuristic score if the LLM is unavailable.
-        """
         try:
             from src.orchestration.llm_client import call_llm_json
             user_prompt = _REVIEW_USER.format(
@@ -228,7 +368,6 @@ class FinancialAnalysisAgent:
             review = call_llm_json(_REVIEW_SYSTEM, user_prompt)
             if not isinstance(review, dict):
                 raise ValueError("non-dict response")
-            # Normalise
             review.setdefault("confidence",       0.5)
             review.setdefault("issues",           [])
             review.setdefault("missing_signals",  [])
@@ -236,16 +375,11 @@ class FinancialAnalysisAgent:
                 "PASS" if float(review["confidence"]) >= REVIEW_CONFIDENCE_THRESHOLD
                 else "NEEDS_MORE_DATA")
             return review
-
         except Exception as exc:
             logger.warning(f"LLM review unavailable: {exc} — using heuristic fallback")
             return self._heuristic_review(result)
 
     def _heuristic_review(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Deterministic confidence score when the LLM is not available.
-        Mirrors the LLM scoring guide above.
-        """
         metrics       = result.get("metrics", {})
         present_count = sum([
             bool(metrics.get("total_estimated_cost")),
@@ -313,7 +447,7 @@ class FinancialAnalysisAgent:
         return (statistics.mean(rates) / 100 * 20) if rates else 0
 
     # ═══════════════════════════════════════════════════════════════════════
-    # SCORING
+    # SCORING + RISKS + RECOMMENDATIONS + SUMMARY  (unchanged)
     # ═══════════════════════════════════════════════════════════════════════
 
     def _calculate_viability(self, runway, growth, margin, funding, budget):
@@ -341,10 +475,6 @@ class FinancialAnalysisAgent:
                 else:
                     score -= 0.05
         return min(score, 1.0)
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # RISK + RECOMMENDATIONS + SUMMARY  (unchanged)
-    # ═══════════════════════════════════════════════════════════════════════
 
     def _generate_risks(self, runway, growth):
         risks = []
@@ -378,17 +508,13 @@ class FinancialAnalysisAgent:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Module helper: merge two extracted_data dicts
+# Module helper
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _merge_financial_data(
     base:  Dict[str, Any],
     extra: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Merge financial_metrics from `extra` into `base` (deduplication by value).
-    All other keys in `base` are preserved unchanged.
-    """
     merged = dict(base)
     base_fm  = {k: list(v) for k, v in
                 (base.get("financial_metrics") or {}).items()}

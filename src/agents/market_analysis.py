@@ -1,26 +1,21 @@
 """
-market_analysis.py  —  Phase 1b update
+market_analysis.py  —  Phase 2 update: RAG-augmented market analysis
 
-New: _review_output() + run_with_review()
-
-Same pattern as financial_analysis.py:
-  1. Run the standard analysis.
-  2. Ask the LLM (or heuristic fallback) to rate confidence and list gaps.
-  3. If confidence < threshold, call search_callback with targeted queries
-     and re-run with enriched data.
-
-Key signals the reviewer checks:
-  - TAM value present (market_sizes)
-  - Growth rate (CAGR) present
-  - Sentiment signal (keyword count)
-  - Sufficient page coverage
+Changes vs Phase 1b:
+  - run() and run_with_review() accept an optional `rag` parameter.
+  - _analyze_sentiment() now performs a semantic RAG query for sentiment-
+    bearing chunks before falling back to keyword scanning.
+  - _extract_market_size() and _extract_growth_rate() query RAG when
+    the structured financial_metrics are empty.
+  - All RAG usage degrades gracefully to the original behaviour when
+    rag is None or not ready.
 """
 
 from __future__ import annotations
 
 import json
 import statistics
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from src.config.settings import LLM_SETTINGS, MARKET_SETTINGS
 from src.orchestration.logger import setup_logger
@@ -58,11 +53,28 @@ _REVIEW_USER = """Review this market analysis output:
 Business context: {business_idea} in {industry} targeting {target_market}.
 """
 
+# ── RAG sentiment extraction prompt ───────────────────────────────────────
+
+_SENTIMENT_SYSTEM = """You are a market sentiment analyst.
+Given research text snippets, identify positive and negative market signals.
+
+Return ONLY a JSON object:
+{
+  "positive_phrases": ["list of short positive signals found in the text"],
+  "negative_phrases": ["list of short negative signals found in the text"]
+}
+
+Examples of positive signals: growth, demand, expansion, adoption, rising, opportunity
+Examples of negative signals: decline, saturation, risk, challenging, falling, crisis
+"""
+
+_SENTIMENT_USER = "Analyse market sentiment from these research snippets:\n\n{chunks}"
+
 
 class MarketAnalysisAgent:
 
     # ═══════════════════════════════════════════════════════════════════════
-    # PUBLIC: run_with_review  (Phase 1b entry point)
+    # PUBLIC: run_with_review  (Phase 2 entry point)
     # ═══════════════════════════════════════════════════════════════════════
 
     def run_with_review(
@@ -70,19 +82,21 @@ class MarketAnalysisAgent:
         extracted_data:   Dict[str, Any],
         structured_input: Dict[str, Any] | None = None,
         search_callback=None,
+        rag=None,
     ) -> Dict[str, Any]:
         """
-        Run market analysis with self-review and optional gap-fill.
+        Run market analysis with optional RAG augmentation and self-review.
 
         Args:
             extracted_data:   ExtractionEngine output.
             structured_input: Business context dict.
-            search_callback:  Optional callable(queries: list[str]) → new extracted_data.
+            search_callback:  Optional callable(queries) → new extracted_data.
+            rag:              Optional RAGManager instance (Phase 2).
 
         Returns:
             Analysis result dict with an added `review` key.
         """
-        result = self.run(extracted_data)
+        result = self.run(extracted_data, rag=rag)
         ctx    = structured_input or {}
 
         if not LLM_SETTINGS.get("enable_self_correction", True):
@@ -113,7 +127,7 @@ class MarketAnalysisAgent:
                 enriched = search_callback(missing)
                 if enriched:
                     extracted_data = _merge_market_data(extracted_data, enriched)
-                    result         = self.run(extracted_data)
+                    result         = self.run(extracted_data, rag=rag)
             except Exception as exc:
                 logger.warning(f"MarketAnalysis gap-fill failed: {exc}")
                 break
@@ -121,13 +135,17 @@ class MarketAnalysisAgent:
         return result
 
     # ═══════════════════════════════════════════════════════════════════════
-    # ORIGINAL run()  — unchanged
+    # ORIGINAL run()  — Phase 2: rag param added
     # ═══════════════════════════════════════════════════════════════════════
 
-    def run(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
-        tam        = self._extract_market_size(extracted_data)
-        growth     = self._extract_growth_rate(extracted_data)
-        sentiment  = self._analyze_sentiment(extracted_data)
+    def run(
+        self,
+        extracted_data: Dict[str, Any],
+        rag=None,
+    ) -> Dict[str, Any]:
+        tam        = self._extract_market_size(extracted_data, rag=rag)
+        growth     = self._extract_growth_rate(extracted_data, rag=rag)
+        sentiment  = self._analyze_sentiment(extracted_data, rag=rag)
         tam_sam_som = self._calculate_tam_sam_som(tam)
 
         opportunity_score = self._calculate_opportunity_score(
@@ -153,18 +171,207 @@ class MarketAnalysisAgent:
             data_confidence = "Low"
 
         return {
-            "market_size":      tam,
-            "tam_sam_som":      tam_sam_som,
-            "growth_rate":      growth,
-            "sentiment":        sentiment,
+            "market_size":       tam,
+            "tam_sam_som":       tam_sam_som,
+            "growth_rate":       growth,
+            "sentiment":         sentiment,
             "opportunity_score": round(opportunity_score, 2),
-            "key_insights":     self._generate_insights(tam, growth, sentiment),
-            "summary":          summary,
-            "data_confidence":  data_confidence,
+            "key_insights":      self._generate_insights(tam, growth, sentiment),
+            "summary":           summary,
+            "data_confidence":   data_confidence,
+            "rag_augmented":     rag is not None and rag.is_ready(),
         }
 
     # ═══════════════════════════════════════════════════════════════════════
-    # PHASE 1b: SELF-REVIEW
+    # PHASE 2: RAG-AUGMENTED HELPERS
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _extract_market_size(
+        self,
+        data: Dict[str, Any],
+        rag=None,
+    ) -> Dict[str, Any]:
+        sizes = data.get("financial_metrics", {}).get("market_sizes", [])
+
+        if not sizes and rag is not None and rag.is_ready():
+            logger.info("MarketAnalysis: market_sizes empty — querying RAG")
+            chunks = rag.query(
+                "total addressable market size TAM billion valuation industry",
+                top_k=3,
+                intent_filter=None,
+            )
+            if chunks:
+                sizes = self._parse_money_from_chunks(chunks)
+                logger.info(f"MarketAnalysis RAG extracted market sizes: {sizes}")
+
+        if sizes:
+            return {"global": statistics.mean(sizes), "currency": "USD"}
+        return {"global": 0, "currency": "USD"}
+
+    def _extract_growth_rate(
+        self,
+        data: Dict[str, Any],
+        rag=None,
+    ) -> float:
+        rates = data.get("financial_metrics", {}).get("growth_rates", [])
+
+        if not rates and rag is not None and rag.is_ready():
+            logger.info("MarketAnalysis: growth_rates empty — querying RAG")
+            chunks = rag.query(
+                "market growth rate CAGR annual growth percentage forecast",
+                top_k=3,
+                intent_filter=None,
+            )
+            if chunks:
+                rates = self._parse_percentages_from_chunks(chunks)
+                logger.info(f"MarketAnalysis RAG extracted growth rates: {rates}")
+
+        return statistics.mean(rates) if rates else 0
+
+    def _analyze_sentiment(
+        self,
+        data: Dict[str, Any],
+        rag=None,
+    ) -> Dict[str, Any]:
+        """
+        Phase 2: First try a RAG semantic query for sentiment-bearing text,
+        then run the keyword scan over both RAG chunks and existing keywords.
+        """
+        positive_words = ["growth", "expanding", "rising", "demand",
+                          "opportunity", "adoption", "increase", "bullish",
+                          "surge", "boom", "accelerat"]
+        negative_words = ["decline", "falling", "crisis", "saturation",
+                          "risk", "challenging", "bearish", "slowdown",
+                          "contraction", "downturn"]
+
+        positive = negative = 0
+
+        # ── Phase 2: RAG sentiment retrieval ──────────────────────────────
+        rag_positive_bonus = 0
+        rag_negative_bonus = 0
+
+        if rag is not None and rag.is_ready():
+            try:
+                pos_chunks = rag.query(
+                    "market growth opportunity demand adoption expansion",
+                    top_k=3,
+                    intent_filter=None,
+                )
+                neg_chunks = rag.query(
+                    "market risk decline saturation competition challenge",
+                    top_k=3,
+                    intent_filter=None,
+                )
+
+                # Count positive/negative signals in RAG chunks
+                for chunk in pos_chunks:
+                    chunk_lower = chunk.lower()
+                    rag_positive_bonus += sum(
+                        1 for w in positive_words if w in chunk_lower
+                    )
+                for chunk in neg_chunks:
+                    chunk_lower = chunk.lower()
+                    rag_negative_bonus += sum(
+                        1 for w in negative_words if w in chunk_lower
+                    )
+
+                # Try LLM-assisted sentiment for better accuracy
+                if pos_chunks or neg_chunks:
+                    llm_sentiment = self._llm_sentiment(pos_chunks + neg_chunks)
+                    if llm_sentiment:
+                        rag_positive_bonus = max(
+                            rag_positive_bonus, llm_sentiment["positive"]
+                        )
+                        rag_negative_bonus = max(
+                            rag_negative_bonus, llm_sentiment["negative"]
+                        )
+
+                logger.info(
+                    f"MarketAnalysis RAG sentiment: "
+                    f"+{rag_positive_bonus} -{rag_negative_bonus}"
+                )
+            except Exception as exc:
+                logger.warning(f"MarketAnalysis RAG sentiment query failed: {exc}")
+
+        positive += rag_positive_bonus
+        negative += rag_negative_bonus
+
+        # ── Original keyword scan over extracted keywords ──────────────────
+        for keyword in data.get("keywords", []):
+            text = keyword.lower()
+            if any(w in text for w in positive_words):
+                positive += 1
+            if any(w in text for w in negative_words):
+                negative += 1
+
+        total = positive + negative if positive + negative > 0 else 1
+        score = (positive - negative) / total
+        label = "Positive" if score > 0.2 else ("Negative" if score < -0.2 else "Neutral")
+        return {
+            "score":            score,
+            "label":            label,
+            "positive_signals": positive,
+            "negative_signals": negative,
+        }
+
+    def _llm_sentiment(self, chunks: List[str]) -> Optional[Dict[str, int]]:
+        """
+        Ask the LLM to count positive/negative market signals in chunks.
+        Returns None if LLM is unavailable.
+        """
+        try:
+            from src.orchestration.llm_client import call_llm_json
+            combined = "\n\n---\n\n".join(chunks[:4])
+            result = call_llm_json(
+                _SENTIMENT_SYSTEM,
+                _SENTIMENT_USER.format(chunks=combined[:2_500]),
+            )
+            if isinstance(result, dict):
+                pos = len(result.get("positive_phrases", []))
+                neg = len(result.get("negative_phrases", []))
+                return {"positive": pos, "negative": neg}
+        except Exception as exc:
+            logger.warning(f"MarketAnalysis LLM sentiment failed: {exc}")
+        return None
+
+    # ── Numeric parsers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_money_from_chunks(chunks: List[str]) -> List[float]:
+        import re
+        pattern = r"\$?\s?(\d+(?:[.,]\d+)?)\s?(trillion|billion|million|bn|tn|b|m)?"
+        results = []
+        for chunk in chunks:
+            for num_str, unit in re.findall(pattern, chunk.lower()):
+                try:
+                    val = float(num_str.replace(",", ""))
+                    u   = unit.lower().strip()
+                    if u in ("t", "tn", "trillion"):  val *= 1e12
+                    elif u in ("b", "bn", "billion"): val *= 1e9
+                    elif u in ("m", "million"):        val *= 1e6
+                    if val > 1_000_000:   # filter out tiny numbers
+                        results.append(val)
+                except ValueError:
+                    pass
+        return results[:5]
+
+    @staticmethod
+    def _parse_percentages_from_chunks(chunks: List[str]) -> List[float]:
+        import re
+        pattern = r"\b(\d+(?:\.\d+)?)\s?%"
+        results = []
+        for chunk in chunks:
+            for pct in re.findall(pattern, chunk):
+                try:
+                    val = float(pct)
+                    if 0 < val < 200:   # sanity filter
+                        results.append(val)
+                except ValueError:
+                    pass
+        return results[:5]
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PHASE 1b: SELF-REVIEW  (unchanged)
     # ═══════════════════════════════════════════════════════════════════════
 
     def _review_output(
@@ -201,12 +408,12 @@ class MarketAnalysisAgent:
         result:  Dict[str, Any],
         context: Dict[str, Any],
     ) -> Dict[str, Any]:
-        tam_value  = result.get("market_size",  {}).get("global",  0) or 0
-        growth     = result.get("growth_rate",  0) or 0
-        sentiment  = result.get("sentiment",    {})
-        pos_sig    = sentiment.get("positive_signals", 0)
-        neg_sig    = sentiment.get("negative_signals", 0)
-        opp_score  = result.get("opportunity_score", 0) or 0
+        tam_value = result.get("market_size",  {}).get("global",  0) or 0
+        growth    = result.get("growth_rate",  0) or 0
+        sentiment = result.get("sentiment",    {})
+        pos_sig   = sentiment.get("positive_signals", 0)
+        neg_sig   = sentiment.get("negative_signals", 0)
+        opp_score = result.get("opportunity_score", 0) or 0
 
         score = 0.0
         issues: List[str]          = []
@@ -245,18 +452,8 @@ class MarketAnalysisAgent:
         }
 
     # ═══════════════════════════════════════════════════════════════════════
-    # ORIGINAL helpers  — all unchanged
+    # ORIGINAL helpers  (unchanged)
     # ═══════════════════════════════════════════════════════════════════════
-
-    def _extract_market_size(self, data):
-        sizes = data.get("financial_metrics", {}).get("market_sizes", [])
-        if sizes:
-            return {"global": statistics.mean(sizes), "currency": "USD"}
-        return {"global": 0, "currency": "USD"}
-
-    def _extract_growth_rate(self, data):
-        rates = data.get("financial_metrics", {}).get("growth_rates", [])
-        return statistics.mean(rates) if rates else 0
 
     def _calculate_tam_sam_som(self, market_data):
         tam       = market_data.get("global", 0)
@@ -268,24 +465,6 @@ class MarketAnalysisAgent:
             "som": tam * sam_ratio * som_ratio,
             "assumptions": f"SAM = {sam_ratio:.0%} of TAM, SOM = {som_ratio:.0%} of SAM",
         }
-
-    def _analyze_sentiment(self, data):
-        positive_words = ["growth", "expanding", "rising", "demand",
-                          "opportunity", "adoption", "increase"]
-        negative_words = ["decline", "falling", "crisis",
-                          "saturation", "risk", "challenging"]
-        positive = negative = 0
-        for keyword in data.get("keywords", []):
-            text = keyword.lower()
-            if any(w in text for w in positive_words):
-                positive += 1
-            if any(w in text for w in negative_words):
-                negative += 1
-        total = positive + negative if positive + negative > 0 else 1
-        score = (positive - negative) / total
-        label = "Positive" if score > 0.2 else ("Negative" if score < -0.2 else "Neutral")
-        return {"score": score, "label": label,
-                "positive_signals": positive, "negative_signals": negative}
 
     def _calculate_opportunity_score(self, tam_data, growth, sentiment_score):
         tam   = tam_data.get("global", 0)
