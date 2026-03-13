@@ -209,7 +209,8 @@ class WebScraper:
         url_seen = set()
         urls = []
         for item in search_results:
-            url = item.get("url")
+            # Support both SearchResult dataclass objects (.url) and plain dicts (.get)
+            url = getattr(item, "url", None) or (item.get("url") if isinstance(item, dict) else None)
             if not url or url in url_seen:
                 continue
             url_seen.add(url)

@@ -17,7 +17,7 @@ import os
 #   LLM_API_KEY  = "<your key>"
 LLM_SETTINGS = {
     # Full LiteLLM model string: "<provider>/<model-name>"
-    "model":           os.getenv("LLM_MODEL",    "ollama/llama3"),
+    "model":           os.getenv("LLM_MODEL",    "ollama/llama3:8b-instruct-q4_K_M"),
     # API base URL — required for Ollama; leave None for cloud providers
     "api_base":        os.getenv("LLM_API_BASE", "http://localhost:11434"),
     # API key — empty string is treated as "none" for local models

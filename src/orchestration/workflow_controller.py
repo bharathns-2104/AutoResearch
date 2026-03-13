@@ -16,7 +16,7 @@ from ..agents.competitive_analysis import CompetitiveAnalysisAgent
 from ..agents.market_analysis import MarketAnalysisAgent
 
 # Imported at module level for reliability
-from ..agents.search_engine import SearchEngine
+from ..agents.search_engine import SearchEngine, SearchEngineConfig
 from ..agents.web_scraper import WebScraper
 from ..agents.extraction_engine import ExtractionEngine
 from ..orchestration.rag_manager import RAGManager
@@ -95,8 +95,9 @@ class WorkflowController:
         if not structured_input:
             self._fail("No structured input found for search"); return
         try:
-            se      = SearchEngine(max_results_per_query=5)
-            results = se.search(structured_input)
+            query   = structured_input.get("business_idea") or structured_input.get("query", "")
+            se      = SearchEngine(SearchEngineConfig(max_results=5))
+            results = se.search(query)
             if not results:
                 self._fail("Search returned empty results"); return
             self.state_manager.add_data("search_results", results)
@@ -388,10 +389,10 @@ class WorkflowController:
         
         self.logger.info(f"Gap-fill search: {filled}")
         try:
-            se          = SearchEngine(max_results_per_query=3)
+            se          = SearchEngine(SearchEngineConfig(max_results=3))
             all_results = []
             for q in filled:
-                all_results.extend(se.search_query(q))
+                all_results.extend(se.search(q))
 
             if not all_results: return None
 
@@ -409,10 +410,10 @@ class WorkflowController:
         industry = structured_input.get("industry",      "")
         filled   = [q.format(idea=idea, industry=industry) for q in extra_queries]
         
-        se          = SearchEngine(max_results_per_query=3)
+        se          = SearchEngine(SearchEngineConfig(max_results=3))
         all_results = []
         for q in filled:
-            all_results.extend(se.search_query(q))
+            all_results.extend(se.search(q))
         
         if not all_results: return structured_data
         
