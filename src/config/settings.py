@@ -95,3 +95,29 @@ MARKET_SETTINGS = {
     "sam_ratio": 0.30,
     "som_ratio": 0.03,
 }
+
+# ======================================================
+# RAG SETTINGS  (Phase 2 — ChromaDB RAG Layer)
+# ======================================================
+# sentence-transformers model used for embedding.
+# all-MiniLM-L6-v2 is fast (~80ms/page on CPU), 22M params, zero-cost.
+# Alternatives: all-mpnet-base-v2 (slower, higher quality)
+#
+# ChromaDB persists to ./chroma_db/{session_id}/ and is deleted after
+# each pipeline run.  Set RAG_ENABLED=false to skip the layer entirely.
+RAG_SETTINGS = {
+    # Toggle the entire RAG layer on/off
+    "enabled":              os.getenv("RAG_ENABLED", "true").lower() == "true",
+    # Local sentence-transformers model name (downloaded on first use)
+    "embedding_model":      os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+    # Root directory for ChromaDB on-disk storage
+    "persist_dir":          os.getenv("RAG_PERSIST_DIR", "./chroma_db"),
+    # Words per chunk (~500 words ≈ 600-700 tokens, fits MiniLM context)
+    "chunk_size_words":     int(os.getenv("RAG_CHUNK_SIZE",    "500")),
+    # Overlap between consecutive chunks (for context continuity)
+    "chunk_overlap_words":  int(os.getenv("RAG_CHUNK_OVERLAP", "50")),
+    # Sentence-transformers batch size for encoding
+    "embed_batch_size":     int(os.getenv("RAG_BATCH_SIZE",    "32")),
+    # Default number of chunks returned per query
+    "default_top_k":        int(os.getenv("RAG_TOP_K",         "3")),
+}

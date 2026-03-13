@@ -13,6 +13,7 @@ class SystemState(Enum):
     INPUT_RECEIVED = "input_received"
     SEARCHING = "searching"
     SCRAPING = "scraping"
+    RAG_INDEXING = "rag_indexing"
     EXTRACTING = "extracting"
     ANALYZING = "analyzing"
     CONSOLIDATING = "consolidating"

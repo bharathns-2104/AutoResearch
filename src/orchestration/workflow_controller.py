@@ -18,7 +18,7 @@ from .state_manager import StateManager, SystemState
 from .logger import setup_logger
 from .input_handler import save_structured_input
 from .cache_manager import CacheManager
-from ..config.settings import SCRAPING_SETTINGS, LLM_SETTINGS
+from ..config.settings import SCRAPING_SETTINGS, LLM_SETTINGS, RAG_SETTINGS
 
 from ..ui.cli_interface import collect_user_input
 from ..agents.intake_agent import IntakeAgent
@@ -29,6 +29,8 @@ from ..agents.market_analysis import MarketAnalysisAgent
 # Imported at module level so unittest.mock.patch() can target them reliably
 from ..agents.search_engine import SearchEngine
 from ..agents.web_scraper import WebScraper
+from ..agents.extraction_engine import ExtractionEngine
+from ..orchestration.rag_manager import RAGManager
 
 
 class WorkflowController:
@@ -57,7 +59,8 @@ class WorkflowController:
                 if   state == SystemState.INITIALIZED:        self.handle_initialization()
                 elif state == SystemState.INPUT_RECEIVED:     self.handle_search()
                 elif state == SystemState.SEARCHING:          self.handle_scraping()
-                elif state == SystemState.SCRAPING:           self.handle_extraction()
+                elif state == SystemState.SCRAPING:           self.handle_rag_indexing()
+                elif state == SystemState.RAG_INDEXING:       self.handle_extraction()
                 elif state == SystemState.EXTRACTING:         self.handle_analysis()
                 elif state == SystemState.CONSOLIDATING:      self.handle_consolidation()
                 elif state == SystemState.GENERATING_REPORT:  self.handle_report_generation()
@@ -136,6 +139,34 @@ class WorkflowController:
             self.state_manager.update_state(SystemState.SCRAPING)
         except Exception as exc:
             self._fail(f"Scraping failed: {exc}")
+
+    def handle_rag_indexing(self):
+        """
+        Phase 2: Build the ChromaDB semantic index from scraped pages.
+
+        - Creates a RAGManager for this session.
+        - Chunks + embeds all scraped pages (~1-2s per page on CPU).
+        - Stores the RAGManager instance in state so analysis agents can query it.
+        - If RAG is disabled or fails, skips silently and advances to extraction.
+        """
+        self.logger.info("Handling RAG indexing phase")
+        scraped_content = self.state_manager.data.get("scraped_content", [])
+
+        if not RAG_SETTINGS.get("enabled", True):
+            self.logger.info("RAG disabled via RAG_ENABLED=false — skipping")
+            self.state_manager.update_state(SystemState.RAG_INDEXING)
+            return
+
+        try:
+            session_id = getattr(self.state_manager, "session_id", None)
+            rag = RAGManager(session_id=session_id)
+            chunks_indexed = rag.index(scraped_content)
+            self.logger.info(f"RAG indexing complete: {chunks_indexed} chunks stored")
+            self.state_manager.add_data("rag", rag)
+        except Exception as exc:
+            self._warn_partial(f"RAG indexing failed (non-fatal): {exc}")
+
+        self.state_manager.update_state(SystemState.RAG_INDEXING)
 
     def handle_extraction(self):
         self.logger.info("Handling extraction phase")
@@ -428,7 +459,6 @@ class WorkflowController:
             if not scraped:
                 return None
 
-            from ..agents.extraction_engine import ExtractionEngine  # late import ok here
             return ExtractionEngine().process(scraped)
 
         except Exception as exc:
@@ -486,6 +516,13 @@ class WorkflowController:
 
     def finish_workflow(self):
         self.logger.info("Workflow finalized")
+        # Clean up ChromaDB session store
+        rag = self.state_manager.data.get("rag")
+        if rag is not None:
+            try:
+                rag.cleanup()
+            except Exception as exc:
+                self.logger.warning(f"RAG cleanup failed (non-fatal): {exc}")
         self.state_manager.dump_to_file()
 
 

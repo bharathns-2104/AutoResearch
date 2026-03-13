@@ -266,7 +266,7 @@ class ExtractionEngine:
         """
         from src.orchestration.llm_client import call_llm_json
 
-        truncated = text[:6_000]
+        truncated = text[:2_000]   # 6_000 causes llama3 to exceed timeout on local hardware
         user_prompt = _EXTRACTION_USER_TEMPLATE.format(
             url=url, title=title, text=truncated
         )
