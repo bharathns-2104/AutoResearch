@@ -310,7 +310,7 @@ class SearchEngine:
         Falls back to general search if duckduckgo_search not installed.
         """
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             results: List[SearchResult] = []
             with DDGS() as ddgs:
                 for item in ddgs.news(
@@ -340,7 +340,7 @@ class SearchEngine:
         DuckDuckGo general web search — existing behaviour, unchanged.
         """
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             results: List[SearchResult] = []
             with DDGS() as ddgs:
                 for item in ddgs.text(

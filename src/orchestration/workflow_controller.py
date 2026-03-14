@@ -95,11 +95,39 @@ class WorkflowController:
         if not structured_input:
             self._fail("No structured input found for search"); return
         try:
-            query   = structured_input.get("business_idea") or structured_input.get("query", "")
-            se      = SearchEngine(SearchEngineConfig(max_results=5))
+            se    = SearchEngine(SearchEngineConfig(max_results=5))
+            query = structured_input.get("business_idea") or structured_input.get("query", "")
+
+            # ── Tier 1: primary query ────────────────────────────────────
             results = se.search(query)
+
+            # ── Tier 2: backup queries from intake agent ─────────────────
             if not results:
-                self._fail("Search returned empty results"); return
+                self.logger.warning("Primary search returned nothing — trying backup queries")
+                backup_queries = structured_input.get("search_queries", [])
+                for bq in backup_queries:
+                    try:
+                        results = se.search(bq)
+                        if results:
+                            self.logger.info(f"Got results via backup query: {bq[:60]}")
+                            break
+                    except Exception as bq_exc:
+                        self.logger.warning(f"Backup query failed: {bq_exc}")
+
+            # ── Tier 3: Wikipedia direct search ──────────────────────────
+            if not results:
+                self.logger.warning("Backup queries empty — falling back to Wikipedia")
+                try:
+                    results = se.wikipedia_search(query, max_results=5)
+                    if results:
+                        self.logger.info(f"Got {len(results)} results from Wikipedia fallback")
+                except Exception as wiki_exc:
+                    self.logger.warning(f"Wikipedia fallback failed: {wiki_exc}")
+
+            # ── Final: fail only if all tiers returned nothing ────────────
+            if not results:
+                self._fail("Search returned empty results from all sources (DuckDuckGo + Wikipedia)"); return
+
             self.state_manager.add_data("search_results", results)
             self.state_manager.update_progress(40)
             self.state_manager.update_state(SystemState.SEARCHING)
