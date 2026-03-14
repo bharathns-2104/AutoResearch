@@ -183,16 +183,28 @@ class RAGManager:
         if not self._is_ready_to_write():
             return 0
 
-        chunk_size = RAG_SETTINGS.get("chunk_size_words", 500)
-        overlap    = RAG_SETTINGS.get("chunk_overlap_words", 50)
+        chunk_size      = RAG_SETTINGS.get("chunk_size_words",       250)
+        overlap         = RAG_SETTINGS.get("chunk_overlap_words",     25)
+        quality_thresh  = RAG_SETTINGS.get("quality_score_threshold", 0.05)
 
         all_texts:    list[str]  = []
         all_ids:      list[str]  = []
         all_metadata: list[dict] = []
 
+        skipped = 0
         for page_idx, page in enumerate(scraped_content):
             raw_text = page.get("text", "")
             if not raw_text:
+                continue
+
+            # ── Quality gate: skip low-value pages (nav/cookie pages etc.) ──
+            page_quality = float(page.get("quality_score", 0.0))
+            if page_quality < quality_thresh:
+                skipped += 1
+                logger.debug(
+                    f"RAGManager: skipping page {page_idx} "
+                    f"(quality={page_quality:.3f} < threshold={quality_thresh})"
+                )
                 continue
 
             clean = _clean_text(raw_text)

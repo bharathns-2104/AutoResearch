@@ -17,7 +17,7 @@ import os
 #   LLM_API_KEY  = "<your key>"
 LLM_SETTINGS = {
     # Full LiteLLM model string: "<provider>/<model-name>"
-    "model":           os.getenv("LLM_MODEL",    "ollama/llama3:8b-instruct-q4_K_M"),
+    "model":           os.getenv("LLM_MODEL",    "ollama/qwen2.5:3b"),
     # API base URL — required for Ollama; leave None for cloud providers
     "api_base":        os.getenv("LLM_API_BASE", "http://localhost:11434"),
     # API key — empty string is treated as "none" for local models
@@ -28,10 +28,10 @@ LLM_SETTINGS = {
     "max_retries":     int(os.getenv("LLM_MAX_RETRIES",   "2")),
     # Whether the extraction engine should use LLM (True) or regex fallback (False)
     "use_llm_extraction": os.getenv("LLM_EXTRACTION", "true").lower() == "true",
-    # Whether the self-correction loop is enabled
-    "enable_self_correction": os.getenv("LLM_SELF_CORRECTION", "true").lower() == "true",
+    # Whether the self-correction loop is enabled (disabled for speed)
+    "enable_self_correction": os.getenv("LLM_SELF_CORRECTION", "false").lower() == "true",
     # Maximum self-correction iterations before giving up
-    "self_correction_max_iterations": int(os.getenv("LLM_SELF_CORRECTION_ITERS", "2")),
+    "self_correction_max_iterations": int(os.getenv("LLM_SELF_CORRECTION_ITERS", "1")),
     # Minimum confidence score to skip self-correction (0.0 – 1.0)
     "self_correction_confidence_threshold": float(
         os.getenv("LLM_CONFIDENCE_THRESHOLD", "0.6")
@@ -112,12 +112,14 @@ RAG_SETTINGS = {
     "embedding_model":      os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
     # Root directory for ChromaDB on-disk storage
     "persist_dir":          os.getenv("RAG_PERSIST_DIR", "./chroma_db"),
-    # Words per chunk (~500 words ≈ 600-700 tokens, fits MiniLM context)
-    "chunk_size_words":     int(os.getenv("RAG_CHUNK_SIZE",    "500")),
+    # Words per chunk (reduced to 250 for faster embedding, still fits MiniLM)
+    "chunk_size_words":     int(os.getenv("RAG_CHUNK_SIZE",    "250")),
     # Overlap between consecutive chunks (for context continuity)
-    "chunk_overlap_words":  int(os.getenv("RAG_CHUNK_OVERLAP", "50")),
-    # Sentence-transformers batch size for encoding
-    "embed_batch_size":     int(os.getenv("RAG_BATCH_SIZE",    "32")),
+    "chunk_overlap_words":  int(os.getenv("RAG_CHUNK_OVERLAP", "25")),
+    # Sentence-transformers batch size for encoding (64 fills CPU/GPU better)
+    "embed_batch_size":     int(os.getenv("RAG_BATCH_SIZE",    "64")),
     # Default number of chunks returned per query
     "default_top_k":        int(os.getenv("RAG_TOP_K",         "3")),
+    # Minimum quality_score for a page to be indexed (skip junk pages)
+    "quality_score_threshold": float(os.getenv("RAG_QUALITY_THRESHOLD", "0.05")),
 }
