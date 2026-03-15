@@ -1,11 +1,25 @@
 import json
 import hashlib
 import time
+import dataclasses
+from enum import Enum
 from pathlib import Path
 
 from .logger import setup_logger
 
 logger = setup_logger()
+
+
+def _safe_serializer(obj):
+    """
+    JSON default serializer that handles dataclasses (SearchResult etc.),
+    Enums, and anything else by falling back to str().
+    """
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return dataclasses.asdict(obj)
+    if isinstance(obj, Enum):
+        return obj.value
+    return str(obj)
 
 
 class CacheManager:
@@ -55,7 +69,7 @@ class CacheManager:
                 json.dump({
                     "timestamp": time.time(),
                     "content": content
-                }, f)
+                }, f, default=_safe_serializer)  # FIX: safe serializer
 
             logger.info(f"Cached content for {url}")
 
@@ -98,7 +112,7 @@ class CacheManager:
                 json.dump({
                     "timestamp": time.time(),
                     "content": content
-                }, f)
+                }, f, default=_safe_serializer)  # FIX: safe serializer
 
             logger.info("Extraction results cached")
 
@@ -110,8 +124,7 @@ class CacheManager:
     # =====================================================
 
     def _get_consolidation_cache_path(self, structured_input):
-        # Use a hash of the structured input as the cache key
-        input_str = json.dumps(structured_input, sort_keys=True)
+        input_str = json.dumps(structured_input, sort_keys=True, default=_safe_serializer)
         input_hash = hashlib.md5(input_str.encode()).hexdigest()
         return self.cache_dir / f"consolidated_output_{input_hash}.json"
 
@@ -144,7 +157,7 @@ class CacheManager:
                 json.dump({
                     "timestamp": time.time(),
                     "content": content
-                }, f)
+                }, f, default=_safe_serializer)  # FIX: safe serializer
 
             logger.info("Consolidated output cached")
 

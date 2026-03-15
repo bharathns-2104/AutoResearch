@@ -1,4 +1,10 @@
 # src/orchestration/workflow_controller.py
+# FIX SUMMARY:
+#   1. FSM: ANALYZING state now correctly transitions to CONSOLIDATING
+#      (was calling handle_consolidation() directly, causing double-fire
+#       and skipping the CONSOLIDATING state transition).
+#   2. finish_workflow() no longer crashes on dump_to_file() because
+#      state_manager.py now uses _safe_serializer.
 
 import sys
 import threading
@@ -50,7 +56,9 @@ class WorkflowController:
                 elif state == SystemState.SCRAPING:           self.handle_rag_indexing()
                 elif state == SystemState.RAG_INDEXING:       self.handle_extraction()
                 elif state == SystemState.EXTRACTING:         self.handle_analysis()
-                elif state == SystemState.ANALYZING:          self.handle_consolidation()  # FIX #11: was missing
+                # FIX: ANALYZING must transition to CONSOLIDATING, not call
+                # handle_consolidation() directly (that caused the double-fire bug).
+                elif state == SystemState.ANALYZING:          self.state_manager.update_state(SystemState.CONSOLIDATING)
                 elif state == SystemState.CONSOLIDATING:      self.handle_consolidation()
                 elif state == SystemState.GENERATING_REPORT:  self.handle_report_generation()
                 else:
@@ -155,13 +163,15 @@ class WorkflowController:
                 )
             self.state_manager.add_data("scraped_content",  scraped)
             self.state_manager.add_data("scraping_partial", len(scraped) < min_threshold)
+            # FIX: after a _warn_partial the state gets set to ERROR then immediately
+            # back to SCRAPING here — ensure we always leave in SCRAPING state.
             self.state_manager.update_progress(60)
             self.state_manager.update_state(SystemState.SCRAPING)
         except Exception as exc:
             self._fail(f"Scraping failed: {exc}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # RAG INDEXING — FIX #3: non-blocking with 30s timeout
+    # RAG INDEXING
     # ═══════════════════════════════════════════════════════════════════════
 
     def handle_rag_indexing(self):
@@ -177,14 +187,12 @@ class WorkflowController:
             session_id = getattr(self.state_manager, "session_id", None)
             rag = RAGManager(session_id=session_id)
 
-            # FIX #3: run indexing in background thread with timeout so
-            # a slow CPU never blocks the entire pipeline indefinitely
             def _index():
                 rag.index(scraped_content)
 
             t = threading.Thread(target=_index, daemon=True)
             t.start()
-            t.join(timeout=30)  # wait max 30 s, then continue without RAG
+            t.join(timeout=30)
 
             if rag.is_ready():
                 self.logger.info("RAG indexing complete")
@@ -338,8 +346,8 @@ class WorkflowController:
         self.state_manager.add_data("review_metadata",  review_metadata)
         self.state_manager.add_data("analysis_partial", bool(analysis_failures))
         self.state_manager.update_progress(85)
-        # FIX #11: set ANALYZING so web_app progress bar advances correctly,
-        # then the FSM immediately routes it to handle_consolidation()
+        # FIX: set ANALYZING so the FSM loop picks it up and transitions
+        # it to CONSOLIDATING on the next iteration (not a direct call).
         self.state_manager.update_state(SystemState.ANALYZING)
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -360,8 +368,6 @@ class WorkflowController:
             routing_config   = self.state_manager.data.get("routing_config", {})
             review_metadata  = self.state_manager.data.get("review_metadata", {})
 
-            # FIX #6: only use cache if it contains the required flat fields;
-            # stale cache from before the schema fix will be missing them
             cached = self.cache_manager.get_consolidation_cache(structured_input)
             if cached and _cache_is_valid(cached):
                 self.logger.info("Using cached consolidation results")
@@ -378,8 +384,6 @@ class WorkflowController:
                     rag                = rag,
                 )
 
-                # FIX #7: enrich consolidated BEFORE caching so the cached
-                # version always has financial_details / market_details etc.
                 consolidated["financial_details"]   = analysis_results.get("financial",   {})
                 consolidated["market_details"]      = analysis_results.get("market",      {})
                 consolidated["competitive_details"] = analysis_results.get("competitive", {})
@@ -396,7 +400,6 @@ class WorkflowController:
                     },
                 }
 
-                # FIX #8 + #9: normalise to flat schema with correct labels
                 consolidated = _normalise_for_report(consolidated, analysis_results)
 
                 self.cache_manager.set_consolidation_cache(structured_input, consolidated)
@@ -538,6 +541,7 @@ class WorkflowController:
                 rag.cleanup()
             except Exception as exc:
                 self.logger.warning(f"RAG cleanup failed: {exc}")
+        # dump_to_file now uses _safe_serializer so SearchResult objects won't crash it
         self.state_manager.dump_to_file()
 
 
@@ -590,15 +594,10 @@ def _merge_keywords(base: dict, extra: dict) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cache validation — FIX #6
+# Cache validation
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _cache_is_valid(cached: dict) -> bool:
-    """
-    Return True only if the cached consolidation contains all flat fields
-    required by ReportValidator.  Stale cache from before the schema fix
-    will be missing these and must be regenerated.
-    """
     required = [
         "overall_viability_score", "overall_rating",
         "financial_score", "market_score", "competitive_score",
@@ -610,24 +609,14 @@ def _cache_is_valid(cached: dict) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Schema Normalisation — FIX #8 + #9
+# Schema Normalisation
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _normalise_for_report(consolidated: dict, analysis_results: dict) -> dict:
-    """
-    Derives the flat fields required by ReportValidator and ReportDataMapper
-    from the rich nested output already in `consolidated` and `analysis_results`.
-
-    FIX #8: overall_rating now uses labels that match what ReportDataMapper /
-            pdf_generator expect ("Strong" / "Moderate" / "Weak").
-    FIX #9: decision now uses labels that match the color map in pdf_generator
-            ("Proceed" / "Proceed with Caution" / "Re-evaluate").
-    """
     fin  = analysis_results.get("financial",   {}) or {}
     mkt  = analysis_results.get("market",      {}) or {}
     comp = analysis_results.get("competitive", {}) or {}
 
-    # ── Scalar scores ────────────────────────────────────────────────────
     financial_score   = float(fin.get("viability_score",   0.0) or 0.0)
     market_score      = float(mkt.get("opportunity_score", 0.0) or 0.0)
     intensity_map     = {"Low": 0.85, "Medium": 0.60, "High": 0.35}
@@ -638,7 +627,6 @@ def _normalise_for_report(consolidated: dict, analysis_results: dict) -> dict:
     consolidated.setdefault("market_score",      market_score)
     consolidated.setdefault("competitive_score", competitive_score)
 
-    # ── Overall rating — FIX #8: labels match DataMapper / pdf_generator ─
     viability = float(consolidated.get("overall_viability_score", 0.0) or 0.0)
     if viability >= 0.65:
         rating = "Strong"
@@ -648,7 +636,6 @@ def _normalise_for_report(consolidated: dict, analysis_results: dict) -> dict:
         rating = "Weak"
     consolidated.setdefault("overall_rating", rating)
 
-    # ── Aggregated risks (list[dict]) ────────────────────────────────────
     raw_risks        = consolidated.get("risk_assessment", []) or []
     aggregated_risks = []
     for risk in raw_risks:
@@ -666,14 +653,12 @@ def _normalise_for_report(consolidated: dict, analysis_results: dict) -> dict:
             })
     consolidated.setdefault("aggregated_risks", aggregated_risks)
 
-    # ── Final recommendations (list[str]) ────────────────────────────────
     recs = consolidated.get("strategic_recommendations", []) or []
     consolidated.setdefault(
         "final_recommendations",
         [r for r in recs if isinstance(r, str) and r.strip()],
     )
 
-    # ── Decision — FIX #9: labels match pdf_generator color map ──────────
     if viability >= 0.60:
         decision = "Proceed"
     elif viability >= 0.35:
@@ -682,7 +667,6 @@ def _normalise_for_report(consolidated: dict, analysis_results: dict) -> dict:
         decision = "Re-evaluate"
     consolidated.setdefault("decision", decision)
 
-    # ── executive_summary must be a plain string ─────────────────────────
     es = consolidated.get("executive_summary", "")
     if not isinstance(es, str):
         consolidated["executive_summary"] = str(es)
