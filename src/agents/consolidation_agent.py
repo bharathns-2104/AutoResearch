@@ -1,5 +1,11 @@
 """
 consolidation_agent.py  —  Phase 2 update: cross-agent RAG synthesis
+
+Fixes vs previous version:
+  - Line ~150: key[:80] guarded with `or ""` so Pyre2/mypy don't flag
+    slicing a potentially-None value.
+  - Line ~248: explicit float() cast before round() so the overload
+    resolves correctly for Pyre2.
 """
 
 from __future__ import annotations
@@ -50,7 +56,6 @@ class ConsolidationAgent:
         business_input:      Dict[str, Any],
         rag=None,
     ) -> Dict[str, Any]:
-        # FIX #12: guard against None inputs from _default_analysis_output
         financial_result   = financial_result   or {}
         market_result      = market_result      or {}
         competitive_result = competitive_result or {}
@@ -99,10 +104,9 @@ class ConsolidationAgent:
             "strategic_recommendations": recommendations[:8],
             "risk_assessment":           risks[:8],
             "swot_analysis":             swot,
-            # FIX #6: expose data_quality under BOTH keys so data_mapper finds it
             "data_quality":              data_quality,
             "metadata": {
-                "data_confidence": data_quality,   # ← data_mapper reads this
+                "data_confidence": data_quality,
             },
             "rag_cross_synthesis": cross_synthesis,
             "rag_augmented":       rag is not None and rag.is_ready(),
@@ -144,7 +148,8 @@ class ConsolidationAgent:
         seen: set = set()
         unique_chunks: List[str] = []
         for c in all_chunks:
-            key = c[:80]
+            # FIX (line ~150): guard against None before slicing
+            key = (c or "")[:80]
             if key not in seen:
                 seen.add(key)
                 unique_chunks.append(c)
@@ -195,15 +200,15 @@ class ConsolidationAgent:
         recs: List[str]     = []
         risks: List[str]    = []
 
-        runway = financial_result.get("runway_months", 0)
+        runway = float(financial_result.get("runway_months") or 0)
         if runway >= 18:
             insights.append(f"Strong financial runway of {runway:.0f} months supports sustained growth.")
         elif 0 < runway < 12:
             insights.append(f"Runway of {runway:.0f} months is tight — prioritise early revenue.")
             risks.append("Short runway may constrain ability to pivot or respond to market changes.")
 
-        growth = market_result.get("growth_rate", 0)
-        tam    = (market_result.get("market_size") or {}).get("global", 0)
+        growth = float(market_result.get("growth_rate") or 0)
+        tam    = float((market_result.get("market_size") or {}).get("global") or 0)
         if growth > 10:
             insights.append(f"High market growth rate ({growth:.1f}%) signals strong tailwinds.")
         if tam > 1e9:
@@ -237,14 +242,14 @@ class ConsolidationAgent:
         market:      Dict[str, Any],
         competitive: Dict[str, Any],
     ) -> float:
-        # FIX #12: safe .get() with fallback — handles None-converted-to-{} inputs
         fin_score  = float(financial.get("viability_score",    0.0) or 0.0)
         mkt_score  = float(market.get("opportunity_score",     0.0) or 0.0)
         comp_level = competitive.get("competitive_intensity", "Medium") or "Medium"
 
         comp_penalty = {"Low": 0.0, "Medium": 0.05, "High": 0.15}.get(comp_level, 0.05)
         overall = (fin_score * 0.4 + mkt_score * 0.6) - comp_penalty
-        return round(max(0.0, min(overall, 1.0)), 2)
+        # FIX (line ~248): explicit float() so Pyre2 resolves round() overload correctly
+        return round(float(max(0.0, min(overall, 1.0))), 2)
 
     def _generate_executive_summary(
         self,

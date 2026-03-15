@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Dict, Any
 
 
 class ReportDataMapper:
@@ -100,8 +101,8 @@ class ReportDataMapper:
         }
 
     def _map_financial_details(self, data):
-        details = data.get("financial_details", {}) or {}
-        metrics = details.get("metrics", {}) or {}
+        details: Dict[str, Any] = data.get("financial_details", {}) or {}
+        metrics: Dict[str, Any] = details.get("metrics", {}) or {}
         return {
             "runway_months":     details.get("runway_months",    0),
             "viability_score":   details.get("viability_score",  0.0),
@@ -112,10 +113,10 @@ class ReportDataMapper:
         }
 
     def _map_market_details(self, data):
-        details     = data.get("market_details", {}) or {}
-        tam_sam_som = details.get("tam_sam_som", {}) or {}
-        market_size = details.get("market_size", {}) or {}
-        sentiment   = details.get("sentiment",   {}) or {}
+        details: Dict[str, Any]     = data.get("market_details", {}) or {}
+        tam_sam_som: Dict[str, Any]  = details.get("tam_sam_som", {}) or {}
+        market_size: Dict[str, Any]  = details.get("market_size", {}) or {}
+        sentiment: Dict[str, Any]    = details.get("sentiment",   {}) or {}
         return {
             "tam":            tam_sam_som.get("tam", 0),
             "sam":            tam_sam_som.get("sam", 0),
@@ -128,8 +129,8 @@ class ReportDataMapper:
         }
 
     def _map_competitive_details(self, data):
-        details = data.get("competitive_details", {}) or {}
-        swot    = details.get("swot_analysis", {}) or {}
+        details: Dict[str, Any] = data.get("competitive_details", {}) or {}
+        swot: Dict[str, Any]    = details.get("swot_analysis", {}) or {}
         return {
             "competitors_found":     details.get("competitors_found", 0),
             "top_competitors":       details.get("top_competitors", []),

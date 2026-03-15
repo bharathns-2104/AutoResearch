@@ -60,6 +60,12 @@ def _make_serializable(obj):
 class StateManager:
     _instance = None
     _lock = Lock()
+    # Class-level annotations let Pyre2 recognise instance attributes that are
+    # assigned inside _initialize() (called from __new__, invisible to the checker).
+    current_state: SystemState
+    progress: int
+    data: dict
+    errors: list
 
     def __new__(cls):
         with cls._lock:
@@ -67,6 +73,13 @@ class StateManager:
                 cls._instance = super(StateManager, cls).__new__(cls)
                 cls._instance._initialize()
         return cls._instance
+
+    def __init__(self):
+        # __init__ is called every time StateManager() is called, but
+        # _initialize only ran once (in __new__). We must NOT re-initialize
+        # here; this stub just lets type-checkers see the instance attributes.
+        if not hasattr(self, "current_state"):
+            self._initialize()
 
     @classmethod
     def reset(cls):

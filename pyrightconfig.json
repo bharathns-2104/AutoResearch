@@ -1,0 +1,13 @@
+{
+  "include": [
+    "src",
+    "tests"
+  ],
+  "pythonVersion": "3.9",
+  "pythonPlatform": "Windows",
+  "venvPath": ".",
+  "venv": "venv",
+  "extraPaths": [
+    "."
+  ]
+}

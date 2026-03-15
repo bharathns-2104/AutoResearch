@@ -9,6 +9,7 @@
 import sys
 import threading
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 from .state_manager import StateManager, SystemState
 from .logger import setup_logger
@@ -274,13 +275,13 @@ class WorkflowController:
 
         raw_extracted    = self.state_manager.data.get("extracted_data")
         structured_input = self.state_manager.data.get("structured_input")
-        routing_config   = self.state_manager.data.get("routing_config", _default_routing())
+        routing_config: Dict[str, Any] = self.state_manager.data.get("routing_config") or _default_routing()
         rag              = self.state_manager.data.get("rag")
 
         if not raw_extracted or not structured_input:
             self._fail("Missing data for analysis"); return
 
-        def search_callback(queries: list) -> dict:
+        def search_callback(queries: list) -> Optional[Dict[str, Any]]:
             return self._gap_fill_search(queries, structured_input)
 
         results           = {}
@@ -442,7 +443,7 @@ class WorkflowController:
     # HELPERS
     # ═══════════════════════════════════════════════════════════════════════
 
-    def _gap_fill_search(self, queries: list, structured_input: dict):
+    def _gap_fill_search(self, queries: list, structured_input: dict) -> Optional[Dict[str, Any]]:
         idea     = structured_input.get("business_idea", "")
         industry = structured_input.get("industry",      "")
         filled   = [q.replace("{idea}", idea).replace("{industry}", industry) for q in queries]
