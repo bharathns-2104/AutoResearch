@@ -107,19 +107,19 @@ MARKET_SETTINGS = {
 # each pipeline run.  Set RAG_ENABLED=false to skip the layer entirely.
 RAG_SETTINGS = {
     # Toggle the entire RAG layer on/off
-    "enabled":              os.getenv("RAG_ENABLED", "true").lower() == "true",
+    "enabled":              os.getenv("RAG_ENABLED", "false").lower() == "true",
     # Local sentence-transformers model name (downloaded on first use)
     "embedding_model":      os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
     # Root directory for ChromaDB on-disk storage
     "persist_dir":          os.getenv("RAG_PERSIST_DIR", "./chroma_db"),
     # Words per chunk (reduced to 250 for faster embedding, still fits MiniLM)
-    "chunk_size_words":     int(os.getenv("RAG_CHUNK_SIZE",    "250")),
+    "chunk_size_words":     int(os.getenv("RAG_CHUNK_SIZE",    "100")),
     # Overlap between consecutive chunks (for context continuity)
-    "chunk_overlap_words":  int(os.getenv("RAG_CHUNK_OVERLAP", "25")),
+    "chunk_overlap_words":  int(os.getenv("RAG_CHUNK_OVERLAP", "12")),
     # Sentence-transformers batch size for encoding (64 fills CPU/GPU better)
-    "embed_batch_size":     int(os.getenv("RAG_BATCH_SIZE",    "64")),
+    "embed_batch_size":     int(os.getenv("RAG_BATCH_SIZE",    "8")),
     # Default number of chunks returned per query
-    "default_top_k":        int(os.getenv("RAG_TOP_K",         "3")),
+    "default_top_k":        int(os.getenv("RAG_TOP_K",         "2")),
     # Minimum quality_score for a page to be indexed (skip junk pages)
-    "quality_score_threshold": float(os.getenv("RAG_QUALITY_THRESHOLD", "0.05")),
+    "quality_score_threshold": float(os.getenv("RAG_QUALITY_THRESHOLD", "0.01")),
 }

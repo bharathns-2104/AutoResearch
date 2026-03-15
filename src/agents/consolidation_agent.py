@@ -1,13 +1,5 @@
 """
 consolidation_agent.py  —  Phase 2 update: cross-agent RAG synthesis
-
-Changes vs Phase 1:
-  - consolidate() accepts an optional `rag` parameter.
-  - When rag is provided and ready, _cross_agent_synthesis() queries the
-    shared ChromaDB collection for signals that cut across financial,
-    market, and competitive dimensions, producing a richer set of
-    executive insights and strategic recommendations.
-  - All RAG usage degrades gracefully when rag is None or not ready.
 """
 
 from __future__ import annotations
@@ -18,8 +10,6 @@ from typing import Dict, Any, List, Optional
 from src.orchestration.logger import setup_logger
 
 logger = setup_logger()
-
-# ── Cross-agent RAG prompts ────────────────────────────────────────────────
 
 _CROSS_SYSTEM = """You are a senior business strategy analyst.
 Given research text snippets spanning financial, market, and competitive data,
@@ -52,10 +42,6 @@ Competitive landscape: {competitive_summary}
 
 class ConsolidationAgent:
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # PUBLIC ENTRY POINT
-    # ═══════════════════════════════════════════════════════════════════════
-
     def consolidate(
         self,
         financial_result:    Dict[str, Any],
@@ -64,19 +50,12 @@ class ConsolidationAgent:
         business_input:      Dict[str, Any],
         rag=None,
     ) -> Dict[str, Any]:
-        """
-        Consolidate agent outputs into a unified business report.
+        # FIX #12: guard against None inputs from _default_analysis_output
+        financial_result   = financial_result   or {}
+        market_result      = market_result      or {}
+        competitive_result = competitive_result or {}
+        business_input     = business_input     or {}
 
-        Args:
-            financial_result:   Output from FinancialAnalysisAgent.
-            market_result:      Output from MarketAnalysisAgent.
-            competitive_result: Output from CompetitiveAnalysisAgent.
-            business_input:     Original intake form data.
-            rag:                Optional RAGManager instance (Phase 2).
-
-        Returns:
-            Consolidated report dict.
-        """
         overall_viability = self._calculate_overall_viability(
             financial_result, market_result, competitive_result
         )
@@ -97,46 +76,36 @@ class ConsolidationAgent:
             financial_result, market_result, competitive_result
         )
 
-        # ── Phase 2: cross-agent RAG synthesis ────────────────────────────
         cross_synthesis: Dict[str, Any] = {}
         if rag is not None and rag.is_ready():
             cross_synthesis = self._cross_agent_synthesis(
-                rag,
-                financial_result,
-                market_result,
-                competitive_result,
+                rag, financial_result, market_result, competitive_result,
             )
             if cross_synthesis:
-                # Enrich the standard outputs with RAG-derived insights
                 for insight in cross_synthesis.get("executive_insights", []):
                     if insight and insight not in key_findings:
                         key_findings.append(insight)
-
                 for rec in cross_synthesis.get("strategic_recommendations", []):
                     if rec and rec not in recommendations:
                         recommendations.append(rec)
-
                 for risk in cross_synthesis.get("key_risks", []):
                     if risk and risk not in risks:
                         risks.append(risk)
 
-                logger.info(
-                    f"ConsolidationAgent cross-synthesis added: "
-                    f"{len(cross_synthesis.get('executive_insights', []))} insights, "
-                    f"{len(cross_synthesis.get('strategic_recommendations', []))} recs, "
-                    f"{len(cross_synthesis.get('key_risks', []))} risks"
-                )
-
         return {
-            "overall_viability_score": overall_viability,
-            "executive_summary":       executive_summary,
-            "key_findings":            key_findings[:10],
+            "overall_viability_score":   overall_viability,
+            "executive_summary":         executive_summary,
+            "key_findings":              key_findings[:10],
             "strategic_recommendations": recommendations[:8],
-            "risk_assessment":         risks[:8],
-            "swot_analysis":           swot,
-            "data_quality":            data_quality,
-            "rag_cross_synthesis":     cross_synthesis,
-            "rag_augmented":           rag is not None and rag.is_ready(),
+            "risk_assessment":           risks[:8],
+            "swot_analysis":             swot,
+            # FIX #6: expose data_quality under BOTH keys so data_mapper finds it
+            "data_quality":              data_quality,
+            "metadata": {
+                "data_confidence": data_quality,   # ← data_mapper reads this
+            },
+            "rag_cross_synthesis": cross_synthesis,
+            "rag_augmented":       rag is not None and rag.is_ready(),
             "agent_results": {
                 "financial":   financial_result,
                 "market":      market_result,
@@ -144,9 +113,7 @@ class ConsolidationAgent:
             },
         }
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # PHASE 2: CROSS-AGENT RAG SYNTHESIS
-    # ═══════════════════════════════════════════════════════════════════════
+    # ── Cross-agent RAG synthesis ──────────────────────────────────────────
 
     def _cross_agent_synthesis(
         self,
@@ -155,11 +122,6 @@ class ConsolidationAgent:
         market_result:      Dict[str, Any],
         competitive_result: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Query the shared RAG store with cross-cutting strategic queries,
-        then ask the LLM to synthesise executive insights, strategic
-        recommendations, and key risks.
-        """
         queries = [
             "business opportunity competitive advantage differentiation",
             "market risk barrier entry threat competition",
@@ -173,19 +135,12 @@ class ConsolidationAgent:
             try:
                 chunks = rag.query(query, top_k=3, intent_filter=None)
                 all_chunks.extend(chunks)
-                logger.info(
-                    f"ConsolidationAgent RAG '{query[:45]}' → {len(chunks)} chunks"
-                )
             except Exception as exc:
-                logger.warning(
-                    f"ConsolidationAgent RAG query failed '{query[:45]}': {exc}"
-                )
+                logger.warning(f"ConsolidationAgent RAG query failed '{query[:45]}': {exc}")
 
         if not all_chunks:
-            logger.warning("ConsolidationAgent cross-synthesis: no RAG chunks retrieved")
             return {}
 
-        # Deduplicate (simple exact-match)
         seen: set = set()
         unique_chunks: List[str] = []
         for c in all_chunks:
@@ -198,20 +153,17 @@ class ConsolidationAgent:
 
         try:
             from src.orchestration.llm_client import call_llm_json
-
             user_prompt = _CROSS_USER.format(
-                chunks             = combined_chunks[:3_500],
-                financial_summary  = financial_result.get("summary", "N/A"),
-                market_summary     = market_result.get("summary", "N/A"),
+                chunks              = combined_chunks[:3_500],
+                financial_summary   = financial_result.get("summary", "N/A"),
+                market_summary      = market_result.get("summary", "N/A"),
                 competitive_summary = competitive_result.get("summary", "N/A"),
             )
             result = call_llm_json(_CROSS_SYSTEM, user_prompt)
-
             if not isinstance(result, dict):
                 raise ValueError(f"Expected dict, got {type(result)}")
 
-            # Validate and sanitise
-            synthesis = {
+            return {
                 "executive_insights": [
                     i for i in result.get("executive_insights", [])
                     if isinstance(i, str) and i.strip()
@@ -226,19 +178,10 @@ class ConsolidationAgent:
                 ][:3],
                 "confidence_note": result.get("confidence_note", ""),
             }
-            logger.info("ConsolidationAgent cross-synthesis succeeded via LLM")
-            return synthesis
-
         except Exception as exc:
-            logger.warning(
-                f"ConsolidationAgent cross-synthesis LLM call failed: {exc} "
-                "— falling back to heuristic synthesis"
-            )
+            logger.warning(f"ConsolidationAgent cross-synthesis LLM failed: {exc} — using heuristic")
             return self._heuristic_cross_synthesis(
-                unique_chunks,
-                financial_result,
-                market_result,
-                competitive_result,
+                unique_chunks, financial_result, market_result, competitive_result
             )
 
     def _heuristic_cross_synthesis(
@@ -248,15 +191,10 @@ class ConsolidationAgent:
         market_result:      Dict[str, Any],
         competitive_result: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Lightweight fallback when LLM is unavailable.
-        Derives insights from agent scores rather than chunk parsing.
-        """
         insights: List[str] = []
         recs: List[str]     = []
         risks: List[str]    = []
 
-        # Financial insight
         runway = financial_result.get("runway_months", 0)
         if runway >= 18:
             insights.append(f"Strong financial runway of {runway:.0f} months supports sustained growth.")
@@ -264,7 +202,6 @@ class ConsolidationAgent:
             insights.append(f"Runway of {runway:.0f} months is tight — prioritise early revenue.")
             risks.append("Short runway may constrain ability to pivot or respond to market changes.")
 
-        # Market insight
         growth = market_result.get("growth_rate", 0)
         tam    = (market_result.get("market_size") or {}).get("global", 0)
         if growth > 10:
@@ -272,15 +209,13 @@ class ConsolidationAgent:
         if tam > 1e9:
             recs.append("Target a well-defined sub-segment of the large TAM to reduce go-to-market risk.")
 
-        # Competitive insight
-        intensity = competitive_result.get("competitive_intensity", "")
+        intensity  = competitive_result.get("competitive_intensity", "")
         comp_count = competitive_result.get("competitors_found", 0)
         if intensity == "High":
             risks.append(f"High competitive intensity ({comp_count} identified players) requires clear differentiation.")
         elif intensity == "Low":
             insights.append("Low competitive density offers a first-mover window — move quickly.")
 
-        # Generic strategic recs
         recs.append("Validate unit economics before scaling marketing spend.")
         recs.append("Invest in a proprietary data moat to create long-term defensibility.")
 
@@ -294,9 +229,7 @@ class ConsolidationAgent:
             ),
         }
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ORIGINAL CONSOLIDATION HELPERS  (unchanged from Phase 1)
-    # ═══════════════════════════════════════════════════════════════════════
+    # ── Standard consolidation helpers ────────────────────────────────────
 
     def _calculate_overall_viability(
         self,
@@ -304,12 +237,12 @@ class ConsolidationAgent:
         market:      Dict[str, Any],
         competitive: Dict[str, Any],
     ) -> float:
-        fin_score  = financial.get("viability_score",    0.0) or 0.0
-        mkt_score  = market.get("opportunity_score",     0.0) or 0.0
-        comp_level = competitive.get("competitive_intensity", "Medium")
+        # FIX #12: safe .get() with fallback — handles None-converted-to-{} inputs
+        fin_score  = float(financial.get("viability_score",    0.0) or 0.0)
+        mkt_score  = float(market.get("opportunity_score",     0.0) or 0.0)
+        comp_level = competitive.get("competitive_intensity", "Medium") or "Medium"
 
         comp_penalty = {"Low": 0.0, "Medium": 0.05, "High": 0.15}.get(comp_level, 0.05)
-
         overall = (fin_score * 0.4 + mkt_score * 0.6) - comp_penalty
         return round(max(0.0, min(overall, 1.0)), 2)
 
@@ -322,10 +255,10 @@ class ConsolidationAgent:
     ) -> str:
         idea      = business.get("business_idea",  "the proposed business")
         industry  = business.get("industry",       "the target industry")
-        fin_score = financial.get("viability_score",   0)
-        mkt_score = market.get("opportunity_score",    0)
-        intensity = competitive.get("competitive_intensity", "moderate")
-        growth    = market.get("growth_rate", 0)
+        fin_score = float(financial.get("viability_score",   0) or 0)
+        mkt_score = float(market.get("opportunity_score",    0) or 0)
+        intensity = competitive.get("competitive_intensity", "moderate") or "moderate"
+        growth    = float(market.get("growth_rate", 0) or 0)
 
         return (
             f"{idea} operates in {industry} with a market growing at "
@@ -333,7 +266,7 @@ class ConsolidationAgent:
             f"Financial viability score is {fin_score:.0%} and market opportunity "
             f"score is {mkt_score:.0%}. "
             f"Competitive intensity is {intensity.lower()}. "
-            f"{'Strong fundamentals support moving forward.'  if fin_score > 0.6 and mkt_score > 0.6 else 'Further validation and risk mitigation are recommended before committing full resources.'}"
+            f"{'Strong fundamentals support moving forward.' if fin_score > 0.6 and mkt_score > 0.6 else 'Further validation and risk mitigation are recommended before committing full resources.'}"
         )
 
     def _extract_key_findings(
@@ -356,18 +289,15 @@ class ConsolidationAgent:
         if tam:
             findings.append(f"Total addressable market estimated at ${tam:,.0f}.")
 
-        sentiment = market.get("sentiment", {})
+        sentiment = market.get("sentiment", {}) or {}
         if sentiment.get("label"):
             findings.append(f"Market sentiment is {sentiment['label'].lower()}.")
 
-        n_comp = competitive.get("competitors_found", 0)
+        n_comp    = competitive.get("competitors_found", 0)
         intensity = competitive.get("competitive_intensity", "")
         if n_comp:
-            findings.append(
-                f"{n_comp} competitors identified; competitive intensity is {intensity.lower()}."
-            )
+            findings.append(f"{n_comp} competitors identified; competitive intensity is {intensity.lower()}.")
 
-        # Data confidence
         confs = [
             financial.get("data_confidence",   "Unknown"),
             market.get("data_confidence",      "Unknown"),
@@ -388,10 +318,8 @@ class ConsolidationAgent:
         recs: List[str] = []
         recs.extend(financial.get("recommendations", []) or [])
         recs.extend(market.get("key_insights",      []) or [])
-
         swot = competitive.get("swot_analysis", {}) or {}
         recs.extend(swot.get("opportunities", []) or [])
-
         return list(dict.fromkeys(r for r in recs if r))
 
     def _compile_risks(
@@ -402,15 +330,12 @@ class ConsolidationAgent:
     ) -> List[str]:
         risks: List[str] = []
         risks.extend(financial.get("risks", []) or [])
-
-        sentiment = market.get("sentiment", {})
+        sentiment = market.get("sentiment", {}) or {}
         if isinstance(sentiment, dict) and sentiment.get("label") == "Negative":
             risks.append("Negative market sentiment may hinder adoption.")
-
         swot = competitive.get("swot_analysis", {}) or {}
-        risks.extend(swot.get("threats",   []) or [])
+        risks.extend(swot.get("threats",    []) or [])
         risks.extend(swot.get("weaknesses", []) or [])
-
         return list(dict.fromkeys(r for r in risks if r))
 
     def _compile_swot(self, competitive: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -423,25 +348,14 @@ class ConsolidationAgent:
         market:      Dict[str, Any],
         competitive: Dict[str, Any],
     ) -> Dict[str, Any]:
-        levels = {
-            "High":    3,
-            "Medium":  2,
-            "Low":     1,
-            "Unknown": 0,
-        }
+        levels = {"High": 3, "Medium": 2, "Low": 1, "Unknown": 0}
         scores = [
             levels.get(financial.get("data_confidence",   "Unknown"), 0),
             levels.get(market.get("data_confidence",      "Unknown"), 0),
             levels.get(competitive.get("data_confidence", "Unknown"), 0),
         ]
         avg = sum(scores) / len(scores)
-        if avg >= 2.5:
-            overall = "High"
-        elif avg >= 1.5:
-            overall = "Medium"
-        else:
-            overall = "Low"
-
+        overall = "High" if avg >= 2.5 else ("Medium" if avg >= 1.5 else "Low")
         return {
             "overall":     overall,
             "financial":   financial.get("data_confidence",   "Unknown"),
