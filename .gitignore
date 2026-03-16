@@ -13,4 +13,5 @@ reports/temp
 FIXES_SUMMARY.md
 test_fixes_lite.py
 test_fixes.py
+node_modules/
 
