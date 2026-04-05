@@ -1,19 +1,3 @@
-"""
-extraction_engine.py  —  Phase 1a: Smart Extraction
-
-Upgrade: LLM-driven entity + financial extraction replaces pure regex/spaCy.
-
-Architecture:
-  1. Each scraped page is passed to the LLM with a structured extraction prompt.
-  2. The LLM returns a JSON object with entities, financials, and keywords.
-  3. Results are merged across all pages and de-duplicated.
-  4. If the LLM is unavailable or times out, the legacy regex path is used
-     as a transparent fallback — no data is lost.
-
-The self-correction loop (Phase 1b) is invoked AFTER extraction if confidence
-is below the configured threshold; see workflow_controller.py for that wiring.
-"""
-
 from __future__ import annotations
 
 import re

@@ -1,11 +1,3 @@
-# src/orchestration/workflow_controller.py
-# FIX SUMMARY:
-#   1. FSM: ANALYZING state now correctly transitions to CONSOLIDATING
-#      (was calling handle_consolidation() directly, causing double-fire
-#       and skipping the CONSOLIDATING state transition).
-#   2. finish_workflow() no longer crashes on dump_to_file() because
-#      state_manager.py now uses _safe_serializer.
-
 import sys
 import threading
 from pathlib import Path

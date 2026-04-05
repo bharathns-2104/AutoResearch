@@ -1,20 +1,3 @@
-"""
-search_engine.py  —  Phase 1c update: intent-routed search with Wikipedia API
-
-Changes vs original:
-  - intent_router() classifies each query into one of four intents:
-      COMPETITOR  → DuckDuckGo News (freshest company/product mentions)
-      MARKET_SIZE → Wikipedia API   (encyclopaedic market size / CAGR data)
-      FINANCIAL   → DuckDuckGo general search
-      GENERAL     → DuckDuckGo general search (fallback)
-  - search() delegates to the correct backend based on the routed intent.
-  - wikipedia_search() hits the Wikipedia REST API (zero cost, no key needed).
-  - Results are capped at 5-7 URLs per query and deduplicated by domain.
-  - All original DuckDuckGo behaviour is preserved as the default fallback.
-  - Requires `wikipedia-api` in requirements.txt:
-      wikipedia-api>=0.6.0
-"""
-
 from __future__ import annotations
 
 import re
@@ -29,7 +12,6 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# ── Constants ──────────────────────────────────────────────────────────────
 
 MAX_RESULTS_PER_QUERY  = 7
 MIN_RESULTS_PER_QUERY  = 3

@@ -1,19 +1,3 @@
-"""
-routing_agent.py  —  Phase 1c: Intelligent Routing
-
-After extraction (and optional self-correction), the RoutingAgent inspects
-the structured data and decides how the downstream analysis pipeline should
-be configured:
-
-  - Which analysis agents to run (financial / competitive / market).
-  - Whether to request additional targeted scraping for a specific gap.
-  - What confidence tier to assign (high / medium / low).
-  - A short human-readable rationale for the routing decision.
-
-Routing logic is LLM-assisted when the LLM is available, but always falls
-back to a deterministic rule-based decision if the LLM is unavailable.
-"""
-
 from __future__ import annotations
 
 from typing import Any

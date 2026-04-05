@@ -1,17 +1,3 @@
-"""
-competitive_analysis.py  —  Phase 2 update: RAG-augmented competitive analysis
-
-Changes vs Phase 1:
-  - run() accepts an optional `rag` parameter.
-  - _extract_competitors() first checks RAG for competitor names when the
-    structured entities list is sparse (< 3 orgs).
-  - _extract_features() queries RAG for product/feature signals to enrich
-    the feature distribution used in SWOT and gap analysis.
-  - _generate_swot() incorporates swot_signals from the ExtractionEngine's
-    LLM extraction (already present in extracted_data) alongside RAG insights.
-  - All RAG usage degrades gracefully when rag is None or not ready.
-"""
-
 from __future__ import annotations
 
 from typing import Dict, Any, List, Optional

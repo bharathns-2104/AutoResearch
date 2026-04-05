@@ -1,18 +1,3 @@
-"""
-self_correction_agent.py  —  Phase 1b: Agentic Self-Correction
-
-After the ExtractionEngine produces its output, this agent:
-
-  1. Scores the extraction confidence (0.0 – 1.0).
-  2. If confidence is below the configured threshold, it asks the LLM to
-     critique its own output and fill in gaps.
-  3. Repeats up to `max_iterations` times or until confidence is sufficient.
-  4. Returns the final (possibly improved) structured_data dict.
-
-The correction loop is transparent — if the LLM is unavailable or every
-iteration fails, the original extraction is returned unchanged.
-"""
-
 from __future__ import annotations
 
 import json

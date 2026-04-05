@@ -1,13 +1,3 @@
-"""
-consolidation_agent.py  —  Phase 2 update: cross-agent RAG synthesis
-
-Fixes vs previous version:
-  - Line ~150: key[:80] guarded with `or ""` so Pyre2/mypy don't flag
-    slicing a potentially-None value.
-  - Line ~248: explicit float() cast before round() so the overload
-    resolves correctly for Pyre2.
-"""
-
 from __future__ import annotations
 
 import json
